@@ -49,7 +49,7 @@ def configure_regional_compile(model, *, eager_rmsnorm=False, normalization_chun
     handle = RegionalCompileHandle([])
     try:
         if eager_rmsnorm:
-            from eager_rms_boundary import install_eager_rms_boundaries
+            from .eager_rms_boundary import install_eager_rms_boundaries
             handle.rms_handle = install_eager_rms_boundaries(
                 model, normalization_chunk_size, include_torch=eager_torch_rmsnorm)
         for module in blocks:

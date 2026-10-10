@@ -42,7 +42,7 @@ class IndependentQkRopeHandle:
 
 def configure_independent_qk_rope(model):
     """Install optional compute only; preserve parameters and native ownership."""
-    from ltx_transformer_types import resolve_ltx_attention_types
+    from .ltx_transformer_types import resolve_ltx_attention_types
     LTX2Attention, LTX2AudioVideoAttnProcessor, LTX2PerturbedAttnProcessor = resolve_ltx_attention_types(model)
     attentions = [module for module in model.modules() if isinstance(module, LTX2Attention)]
     if model.training or not attentions:

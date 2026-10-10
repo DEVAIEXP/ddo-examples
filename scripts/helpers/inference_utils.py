@@ -2,6 +2,7 @@ import contextlib
 import ctypes
 import gc
 import importlib.metadata
+import math
 import os
 import threading
 import time
@@ -52,7 +53,7 @@ def flush():
 
 
 def get_pinned_host_memory_stats():
-    """Return the CUDA host-allocator counters when the local PyTorch build exposes them."""
+    """Return host-allocator counters when supported by the installed PyTorch."""
     if not torch.cuda.is_available() or not hasattr(torch.cuda, "host_memory_stats"):
         return {}
     with contextlib.suppress(Exception):
@@ -65,12 +66,7 @@ def get_pinned_host_memory_stats():
 
 
 def release_pinned_host_cache():
-    """Release unused PyTorch CUDA host-cache blocks at an explicit stage boundary.
-
-    ``pin_memory`` allocations can otherwise remain cached for the rest of a long
-    process. This is intentionally opt-in because that cache improves repeated
-    inference throughput.
-    """
+    """Explicitly release unused pinned cache; never enable this automatically."""
     before = get_pinned_host_memory_stats()
     released = False
     if torch.cuda.is_available():
@@ -99,36 +95,87 @@ def get_gpu_used_gb(device="cuda:0"):
     return (total - free) / 1024**3
 
 
+def get_ram_rss_gb():
+    """Cheap resident working-set observation, explicitly NOT USS."""
+    return psutil.Process().memory_info().rss / 1024**3
+
+
 class PeakMemoryMonitor:
     def __init__(self, device="cuda:0", interval=0.1, *, mode="full"):
-        if mode not in {"full", "rss"}:
+        if mode not in ("full", "rss"):
             raise ValueError("memory monitor mode must be full or rss")
-        self.ram_metric = "rss" if mode == "rss" else "uss" if os.name == "nt" else "rss_anon_with_uss_fallback"
-        self._get_ram_gb = get_ram_gb if mode == "full" else lambda: psutil.Process().memory_info().rss / 1024**3
+        if not math.isfinite(interval) or interval <= 0:
+            raise ValueError("memory monitor interval must be finite and positive")
         self.device = device
+        self.mode = mode
+        self.ram_metric = "rss" if mode == "rss" else "uss" if os.name == "nt" else "rss_anon_with_uss_fallback"
         self.peak_ram = 0.0
         self.peak_vram = 0.0
         self._running = False
         self._thread = None
         self._interval = interval
+        self._stop_event = threading.Event()
+        self._error = None
+        self._sampling_stats = {}
+
+    def metadata(self):
+        return {"mode": self.mode, "ram_metric": self.ram_metric,
+                "gpu_metric": "cuda_mem_get_info_used_minus_baseline",
+                "gpu_absolute_metric": "cuda_mem_get_info_used",
+                "memory_unit": "GiB",
+                "interval_sec": self._interval}
+
+    def sample_once(self):
+        start = time.perf_counter()
+        try:
+            ram = get_ram_rss_gb() if self.mode == "rss" else get_ram_gb()
+        finally:
+            key = "ram_query_seconds"
+            self._sampling_stats[key] = self._sampling_stats.get(key, 0.0) + time.perf_counter() - start
+        start = time.perf_counter()
+        try:
+            vram = get_gpu_used_gb(self.device)
+        finally:
+            key = "gpu_query_seconds"
+            self._sampling_stats[key] = self._sampling_stats.get(key, 0.0) + time.perf_counter() - start
+        self._sampling_stats["samples"] = self._sampling_stats.get("samples", 0) + 1
+        self.peak_ram = max(self.peak_ram, ram)
+        self.peak_vram = max(self.peak_vram, vram)
+        return vram, ram
+
+    def sampling_report(self):
+        return {**self.metadata(), **self._sampling_stats,
+                "error_type": None if self._error is None else type(self._error).__name__}
 
     def start(self):
-        self.peak_ram = self._get_ram_gb()
-        self.peak_vram = get_gpu_used_gb(self.device)
+        if self._running:
+            raise RuntimeError("memory monitor is already running")
+        self.peak_ram = self.peak_vram = 0.0
+        self._sampling_stats = {}
+        self._error = None
+        self._stop_event.clear()
+        self.sample_once()
         self._running = True
         self._thread = threading.Thread(target=self._poll, daemon=True)
         self._thread.start()
 
     def _poll(self):
-        while self._running:
-            self.peak_ram = max(self.peak_ram, self._get_ram_gb())
-            self.peak_vram = max(self.peak_vram, get_gpu_used_gb(self.device))
-            time.sleep(self._interval)
+        try:
+            while not self._stop_event.is_set():
+                self.sample_once()
+                self._stop_event.wait(self._interval)
+        except Exception as error:
+            self._error = error
+            self._stop_event.set()
 
     def stop(self):
         self._running = False
+        self._stop_event.set()
         if self._thread is not None:
             self._thread.join()
+            self._thread = None
+        if self._error is not None:
+            raise RuntimeError("memory monitoring failed; peaks are incomplete") from self._error
         return self.peak_vram, self.peak_ram
 
 
@@ -138,14 +185,12 @@ class RunTracker:
         self.run_metrics = run_metrics
         self.show_metrics = show_metrics
         self.monitor = PeakMemoryMonitor(device, interval=interval, mode=memory_monitor)
-        self.run_metrics["memory_monitor"] = {
-            "mode": memory_monitor, "ram_metric": self.monitor.ram_metric,
-            "gpu_metric": "cuda_mem_get_info_used_minus_baseline",
-            "gpu_absolute_metric": "cuda_mem_get_info_used", "unit": "GiB",
-        }
+        self.run_metrics["memory_monitor"] = self.monitor.metadata()
         torch.cuda.init()
         self.vram_baseline = get_gpu_used_gb(device)
         self.run_metrics["vram_baseline_gb"] = self.vram_baseline
+        self.global_peak_vram_absolute = self.vram_baseline
+        self.run_metrics["global_peak_vram_absolute_gb"] = self.global_peak_vram_absolute
         self.script_start = time.time()
         self.global_peak_vram = 0.0
         self.global_peak_ram = 0.0
@@ -161,7 +206,13 @@ class RunTracker:
         return event
 
     def record_ddo_metrics(self, report, component="transformer"):
-        """Store DDO's public serializable report without reading runtime internals."""
+        """Consume DDO's public report without depending on runtime internals.
+
+        ``report`` intentionally follows the small ``as_dict`` /
+        ``format_profile`` protocol exposed by DDO.  Keeping this boundary here
+        means model runners do not need to know hook-state or VMM attribute
+        names when DDO adds telemetry.
+        """
         payload = report.as_dict()
         self.run_metrics.setdefault("dynamic_offload_reports", {})[component] = payload
         if self.show_metrics:
@@ -177,10 +228,12 @@ class RunTracker:
         return time.time()
 
     def sample_memory(self):
-        ram = self.monitor._get_ram_gb()
-        vram = get_gpu_used_gb(self.device) - self.vram_baseline
+        absolute_vram, ram = self.monitor.sample_once()
+        vram = absolute_vram - self.vram_baseline
         self.global_peak_ram = max(self.global_peak_ram, ram)
         self.global_peak_vram = max(self.global_peak_vram, vram)
+        self.global_peak_vram_absolute = max(self.global_peak_vram_absolute, absolute_vram)
+        self.run_metrics["global_peak_vram_absolute_gb"] = self.global_peak_vram_absolute
         return vram, ram
 
     def step_end(self, step_name, t0):
@@ -188,15 +241,19 @@ class RunTracker:
         peak_vram_abs, peak_ram = self.monitor.stop()
         peak_vram = peak_vram_abs - self.vram_baseline
         if self.show_metrics:
-            print(f"  [{step_name}] {elapsed:.1f}s | Peak VRAM: {peak_vram:.2f} GB | Peak RAM: {peak_ram:.2f} GB")
+            print(f"  [{step_name}] {elapsed:.1f}s | Peak VRAM: {peak_vram:.2f} GB | Peak RAM ({self.monitor.ram_metric}): {peak_ram:.2f} GB")
         self.global_peak_vram = max(self.global_peak_vram, peak_vram)
+        self.global_peak_vram_absolute = max(self.global_peak_vram_absolute, peak_vram_abs)
+        self.run_metrics["global_peak_vram_absolute_gb"] = self.global_peak_vram_absolute
         self.global_peak_ram = max(self.global_peak_ram, peak_ram)
         metric = {
             "name": step_name,
             "elapsed_sec": round(elapsed, 4),
             "peak_vram_gb": round(peak_vram, 4),
-            "peak_vram_absolute_gb": round(peak_vram_abs, 4),
+            "peak_vram_absolute_gb": peak_vram_abs,
             "peak_ram_gb": round(peak_ram, 4),
+            "ram_metric": self.monitor.ram_metric,
+            "memory_monitor": self.monitor.sampling_report(),
         }
         self.run_metrics["steps"].append(metric)
         return metric

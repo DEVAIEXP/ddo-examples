@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 # Resolve the independent ignored custom-block clone without an old host checkout.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
 
@@ -35,7 +37,7 @@ from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
     LTX2ImageDenoiseStep,
     LTX2ImagePrepareLatentsStep,
 )
-from inference_utils import RunTracker, flush
+from scripts.helpers.inference_utils import RunTracker, flush
 
 RUNNING_ON_WSL = False
 DEVICE = "cuda:0"

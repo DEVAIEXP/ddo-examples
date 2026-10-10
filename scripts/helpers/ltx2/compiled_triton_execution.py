@@ -19,7 +19,7 @@ class CompiledTritonHandle:
 
 def configure_compiled_triton(model):
     """Install compute callbacks only; retire after native completion and compilation."""
-    from ltx_transformer_types import resolve_ltx_attention_types
+    from .ltx_transformer_types import resolve_ltx_attention_types
     LTX2Attention, LTX2AudioVideoAttnProcessor, LTX2PerturbedAttnProcessor = resolve_ltx_attention_types(model)
     blocks = list(model.transformer_blocks)
     attentions = [module for module in model.modules() if isinstance(module, LTX2Attention)]

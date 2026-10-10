@@ -110,7 +110,7 @@ class MigrationContracts(unittest.TestCase):
             self.assertNotIn("E:\\ProjetosIA", text)
 
     def test_help_all_runners_without_cuda(self):
-        scripts = list((ROOT / "scripts/ltx2_image").glob("run_*.py")) + [VIDEO]
+        scripts = list((ROOT / "scripts/ltx2_image").glob("run_*.py")) + list((ROOT / "scripts/ltx2_video").glob("run_*.py")) + [VIDEO]
         for script in scripts:
             with self.subTest(script=script.name):
                 code = (
