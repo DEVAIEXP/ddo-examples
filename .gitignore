@@ -1,0 +1,11 @@
+.venv*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.hf_modules*/
+outputs/
+.internal/
+modular_diffusers/custom_blocks/
+.env
+*.log

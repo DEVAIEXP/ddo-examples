@@ -1,0 +1,62 @@
+[project]
+name = "ddo-examples"
+version = "0.1.0"
+description = "Model-specific Modular Diffusers runners using DDO."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch==2.12.1+cu132",
+    "torchvision==0.27.1+cu132",
+    "transformers==5.15.1",
+    "accelerate==1.14.0",
+    "safetensors==0.8.0",
+    "peft==0.20.0",
+    "einops==0.8.2",
+    "psutil==7.2.2",
+    "numpy==2.5.3",
+    "pillow",
+    "hf-xet",
+    "sentencepiece",
+    "diffusers",
+    "diffusers-dynamic-offloader[vmm]",
+    "ddo-vmm-allocator",
+    "cuda-core==1.2.0",
+    "cuda-bindings==13.4.1",
+    "av==18.1.0",
+    "torchaudio==2.11.0",
+    "torchcodec==0.15.0+cu132",
+    "soundfile",
+    "imageio",
+    "imageio-ffmpeg",
+]
+
+[project.optional-dependencies]
+fp8 = ["torchao==0.18.0"]
+kernels = [
+    "triton-windows==3.7.1.post27 ; sys_platform == 'win32'",
+    "triton>=3.7,<3.8 ; sys_platform == 'linux'",
+]
+sdnq = ["sdnq"]
+
+[dependency-groups]
+dev = ["pytest>=9,<10", "ruff>=0.14.3"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+diffusers = { git = "https://github.com/DEVAIEXP/diffusers.git", rev = "e71ebc5858961e2a37d6a7b161d00ae0063c3ab7" }
+diffusers-dynamic-offloader = { path = "../diffusers-dynamic-offloader", editable = true }
+ddo-vmm-allocator = { path = "../diffusers-dynamic-offloader/ddo-vmm-allocator", editable = true }
+torch = { index = "pytorch-cu132" }
+torchvision = { index = "pytorch-cu132" }
+torchcodec = { index = "pytorch-cu132" }
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
