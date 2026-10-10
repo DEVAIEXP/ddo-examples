@@ -41,7 +41,9 @@ compile or provide that binary: use a reviewed allocator wheel or build.
 See the DDO repository's docs/native-wheel-delivery.md and docs/native-vmm.md.
 DDO_VMM_LIBRARY_PATH remains an explicit diagnostic override.
 
-Migration checks are CPU-only; generation parity requires an approved CUDA gate.
+CPU migration checks and one selected Windows BF16 image generation passed.
+Performance parity, video generation and saved FP8 execution in this new
+environment remain unaccepted; further CUDA gates require explicit approval.
 Linux needs its own .so and environment; Windows evidence does not validate
 Linux, WSL, macOS or arbitrary models. See DDO's docs/linux-handoff.md.
 Copied runners retain historical diagnostics, not new recommended presets.

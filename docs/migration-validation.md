@@ -61,3 +61,45 @@ Before generation, present one consolidated command using the previously accepte
 binary, capacities, model/input files and optimization settings for approval.
 Stop on the first ownership, memory or output anomaly. Native Linux remains a
 separate environment and platform gate; consult DDO's Linux handoff.
+
+## Approved Windows BF16 image execution — 2026-10-10
+
+After the CPU-only sequence above, the user separately approved one image gate
+from the new root .venv. The exact command used the copied image VMM runner,
+native encoder and transformer, real default cat prompt, 1280x704, seed43,
+eight steps, one generation, no PAG, local files only, RSS monitoring, CUDA
+timing and saved metrics. Active budget4GiB, total staging1.5GiB (historical
+image host argument0.5GiB times three), source/registration24.625GiB.
+No residency calibration, native rebuild or DLL promotion.
+
+The selected historical DLL was explicitly fixed rather than using automatic
+discovery for this comparison. SHA256 before and after:
+755fcdd8dd1a72b371402750c071ca4b2146c0ac6bfe6b94c9b78f50f1ebb729.
+
+Functional gate PASS: exit0 and plausible saved 1280x704 PNG, zero selected
+fault/admission/read/plan-mismatch/pool-quarantine counters and temporary
+fallbacks, final live tickets/transfer-owned events zero. Encoder collection31
+to zero, transformer736 to zero; encoder cache process committed/registered
+bytes zero before denoise. All phase memory monitors report null error_type.
+Standby purge safely skipped for the same missing Windows privilege as the
+historical gate. This is not pixel-equality validation.
+
+| Measurement | New host | Historical staged Windows gate |
+| --- | ---: | ---: |
+| CUDA transformer warm steps2-8 | 1.524931 s/it | 1.395602 s/it |
+| CUDA transformer phase | 18.657049 s | 16.498256 s |
+| Encoder phase | 20.6153 s | 12.6624 s |
+| RunTracker total | 50.7519 s | 38.5135 s |
+| Sampled peak RSS | 27.4590 GiB | 27.3479 GiB |
+
+GPU absolute sampled peak7.716034GiB, baseline1.026855GiB and peak delta6.6892GiB
+are distinct quantities, not shared-WDDM accounting. The historical approximate
+absolute peak was6.97GiB. Total excludes interpreter/import/bootstrap startup.
+Warm timing increased approximately9.27% and total approximately31.78%; do not
+accept performance parity or attribute the difference to migration without a
+matched contemporaneous control. No extra CUDA run followed.
+
+Ignored artifacts: outputs/migration_image_gate/console.log, its PNG and metrics/.
+PNG SHA256: 877876a4a8e1143a59e51a737ef3eb7f05a27980a6a44d20fed80d2ab581cced.
+JSON SHA256: c422681a8a9d4a355cc0298b28762e58a2ad28e9d5729a03dc2e0d4a6cb30dcf.
+Video and FP8 generation in this new environment remain separate unexecuted gates.
