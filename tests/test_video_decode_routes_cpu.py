@@ -31,9 +31,12 @@ class VideoDecodeRoutes(unittest.TestCase):
         for runner in (minimal, linear, sdnq):
             tree = ast.parse(Path(runner.__file__).read_text())
             main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-            execution = next(n for n in main.body if isinstance(n, ast.Try))
-            loop = next(n for n in execution.body if isinstance(n, ast.For)
-                        and ast.unparse(n.iter) == "decoder_stages")
+            # Import compatibility can introduce earlier try blocks. Identify
+            # the unique decode loop by its contract, not statement position.
+            loops = [n for n in ast.walk(main) if isinstance(n, ast.For)
+                     and ast.unparse(n.iter) == "decoder_stages"]
+            self.assertEqual(len(loops), 1)
+            loop = loops[0]
             routes.append(ast.dump(loop, include_attributes=False))
             text = ast.unparse(loop)
             self.assertIn('state.pop(\'generated_mel_spectrograms\', None)', text)

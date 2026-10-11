@@ -170,7 +170,10 @@ def main():
     import torch
     import sdnq  # Register Diffusers/Transformers quantizers before loading weights.
     from diffusers import ModularPipelineBlocks
-    from diffusers.modular_pipelines.ltx2.guider import LTX2Guidance
+    try:
+        from diffusers.guiders import LTX2Guidance
+    except ImportError:
+        from diffusers.modular_pipelines.ltx2.guider import LTX2Guidance
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
     from diffusers.utils import load_image, encode_video
     from transformers import Gemma3ForConditionalGeneration

@@ -469,7 +469,10 @@ def run(args):
         release_pytorch_host_cache, inspect_host_memory,
     )
     from scripts.helpers.inference_utils import RunTracker
-    from diffusers.modular_pipelines.ltx2.guider import LTX2Guidance
+    try:
+        from diffusers.guiders import LTX2Guidance
+    except ImportError:
+        from diffusers.modular_pipelines.ltx2.guider import LTX2Guidance
 
     device, dtype = "cuda:0", torch.bfloat16
     route = resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset)
