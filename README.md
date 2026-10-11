@@ -48,8 +48,14 @@ must be validated separately before enabling video-specific callbacks there.
 ## Benchmarks
 
 Pipeline comparisons and measured results live here. See the
-[benchmark guide](docs/benchmarks.md) and
-[results](experiments/dynamic_offload_results.md). DDO retains technical
+[benchmark summary](docs/benchmark-summary.md) for gains, trade-offs and
+comparison limits; the [benchmark guide](docs/benchmarks.md) for recording;
+and the [detailed evidence log](experiments/dynamic_offload_results.md).
+Selected five-second video controls observed 1.75x FP8 native denoise speedup
+versus streamless official leaf and 2.03x SDNQ INT4 denoise speedup versus the
+recorded streamed leaf control. These are not allocator-only or universal gains.
+BF16 native remains faster than saved FP8 native in the current full-video case.
+DDO retains technical
 runtime/allocator documentation. Historical runs do not validate migrated runners.
 
 ## Native allocator
@@ -64,9 +70,15 @@ CPU migration checks and one selected Windows BF16 image generation passed.
 Selected SDNQ INT4 image and full five-second video execution also passed;
 the corrected DDO video denoise took 319.6422 s versus the recorded leaf
 control's 649.6985 s. See the benchmark results for exact scope and limitations.
-BF16 image performance parity, native VMM video generation and saved FP8
-execution in this new environment remain unaccepted; further CUDA gates
-require explicit approval.
+The selected BF16 native VMM five-second/eight-step full-video gate passed:
+203.7925 s denoise and 266.9297 s tracked total, with successful cleanup.
+Historical timings are reference evidence, not a matched migration speedup.
+The post-reboot BF16 image repeat recovered historical performance (1.388 s
+CUDA warm step mean, 35.26 s tracked total). Administrative Windows video
+runs with confirmed standby purge completed for BF16 and saved FP8: respectively
+199.36 / 218.59 s denoise and 262.47 / 312.98 s tracked full-video total.
+FP8 is functional for this selected checkpoint, not faster than BF16 and not
+a general quantization-recipe acceptance. Further CUDA gates require approval.
 Linux needs its own .so and environment; Windows evidence does not validate
 Linux, WSL, macOS or arbitrary models. See DDO's docs/linux-handoff.md.
 Copied runners retain historical diagnostics, not new recommended presets.

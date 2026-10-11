@@ -1,5 +1,10 @@
 # DDO native VMM benchmark results
 
+Start with the [benchmark summary](../docs/benchmark-summary.md) for selected
+completed comparisons and current recommendations. This page is the detailed
+engineering evidence log: historical pending statements, interrupted tests and
+rejected candidates are preserved, not a ranked list of recommended settings.
+
 ## Evidence ownership — 2026-10-10
 
 This repository owns pipeline benchmarks and results across models.
@@ -3167,3 +3172,241 @@ Evidence in sibling `ddo-examples`:
 
 The approved sequence is complete. No additional benchmark, budget change or
 native/image regression run follows automatically.
+
+
+### Primary-host BF16 native VMM full-video migration (2026-10-10)
+
+The separately approved gate completed in `ddo-examples`' root uv environment,
+exit 0. Workload: BF16, 1280x704, 5 seconds at 24 fps/121 frames, eight steps,
+seed 43, real default prompt/image, no source audio and generated audio enabled.
+The trusted local custom-block transformer was
+`diffusers_modules.local.transformer_ltx2_video`. Native encoder ceiling 4 GiB,
+transformer ceiling 1.5 GiB, total staging 1.5 GiB and source/registration ceilings
+24.625 GiB were explicit. FF/RMSNorm chunks 1024, phase modulation, compact
+timesteps, in-place residuals and rotary reuse were enabled; no compile or
+experimental compute kernels. CPU host-cache release ran before the transformer.
+GPU temporal streaming decode was enabled.
+
+The selected DLL remained unchanged, SHA256
+`EC5AB4700EE5D171CC06D8E9EC99C549F8D6CC3DFBE7FEB2683B93ADD0E829E6`.
+Command: from the host root, after unsetting child `SSLKEYLOGFILE` and setting
+`HF_HOME=F:/hf_cache`:
+
+```powershell
+uv run --no-sync python -u scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-preset auto --ddo-vmm-library-path E:/ProjetosIA/diffusers-dynamic-offloader/ddo-vmm-allocator/build-joined-spans-cu128-20261006/Release/ddo_vmm.dll --custom-blocks modular_diffusers/custom_blocks/ltx2_video --local-files-only --no-use-audio-condition --width 1280 --height 704 --seconds 5 --frame-rate 24 --steps 8 --seed 43 --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 --ddo-vmm-resident-weight-budget-gb 1.5 --ddo-vmm-staging-buffer-gb 1.5 --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 --feed-forward-chunk-size 1024 --normalization-chunk-size 1024 --phase-modulation --compact-timesteps --inplace-residuals --release-pytorch-host-cache-before-transformer --stream-video-decode --decode-device cuda:0 --show-profile --show-metrics --save-metrics --output-dir outputs/migration_video_bf16_vmm
+```
+
+| Measurement | Current primary host | Historical 2026-10-06 full-video gate |
+| --- | ---: | ---: |
+| Denoise phase, s | 203.7925 | 197.0318 |
+| Decode/save, s | 27.6654 | 30.1365 |
+| Full tracked total, s | 266.9297 | 266.5138 |
+
+Denoise was approximately 3.43% longer, while total was approximately 0.16%
+longer. The historical case used a different DLL/host/forward revision and
+2 GiB transformer ceiling; this is a workload-level reference, not an isolated
+migration regression, matched speedup or repeatability claim. Current phase/8
+is 25.4741 s; progress intervals are not separately resolved CUDA step timings.
+
+Encoder: 13.2534 s; transformer load/prepare: 1.8849 s; attach: 6.7815 s.
+Global sampled GPU delta: 4.115234375 GiB; absolute driver peak: 5.142089844 GiB.
+Denoise absolute driver peak: 4.571777344 GiB. Peak RSS: 28.415805817 GiB.
+These are driver/process samples, not physical weight residency or WDDM shared
+accounting. All phase monitor error fields were null.
+
+Encoder and transformer snapshots reported zero fault/guard/CUDA/capacity/read/
+source-admission/pool failures, plan mismatches, temporary fallback tensors and
+quarantined bytes. Source live tickets and transfer-owned events were zero.
+The encoder collected eight tickets to zero; transformer collection was zero
+to zero. Cleanup and process exit succeeded, not a post-exit allocation census.
+
+Runner media checks found 121 frames at 1280x704 and finite stereo generated
+audio, shape [2,240480], 48000 Hz. MP4 SHA256:
+`56BD4CF1D6F20CD2C978FDA6280902197A24FC179E303AC98F65EE02EB7FD891`.
+This accepts selected full-video migration functionality, not visual quality,
+exact historical output parity, arbitrary models or Linux execution.
+
+Evidence: `outputs/migration_video_bf16_vmm/console.log`,
+`outputs/migration_video_bf16_vmm/metrics/modular_run.json` and
+`outputs/migration_video_bf16_vmm/ltx23_modular_1280x704_5.0s_seed43.mp4`.
+Saved FP8 execution in the primary host remains a separate approval gate.
+
+### Same video runner with historical interpreter (2026-10-10)
+
+The separately approved control ran the same primary-host VMM runner, local
+custom-block clone, DLL and complete arguments as the preceding gate. Only
+the interpreter/environment and output directory changed: direct
+`E:/LTX-2/.venv-vmm/Scripts/python.exe -u` instead of `uv run --no-sync python -u`,
+with `--output-dir outputs/migration_video_bf16_old_venv`. The host working
+directory remained `ddo-examples`, child SSLKEYLOGFILE was unset and HF_HOME
+remained F:/hf_cache. No dependencies, source code or residency limits changed.
+
+| Measurement | Primary environment | Historical environment |
+| --- | ---: | ---: |
+| Denoise, s | 203.7925 | 204.7288 |
+| Encoder, s | 13.2534 | 13.1415 |
+| Decode/save, s | 27.6654 | 27.6269 |
+| Tracked total, s | 266.9297 | 268.3470 |
+
+The historical environment did not recover the old 197.0318-second denoise;
+its denoise was approximately 0.46% longer than the primary environment in
+this single sequential control. This does not isolate each dependency or
+prove equivalence, but provides no observed old-environment performance gain
+for this selected video. Image performance remains a separate investigation.
+
+Both interpreters are Python 3.12.11 with identical recorded Torch/CUDA core
+pins. `uv pip freeze` found the main dependency difference: the historical
+environment uses editable F:/projetos/diffusers at be07836d91c3dfee7147445863a8a28dd8a3d186;
+the primary environment pins the DEVAIEXP fork at e71ebc5858961e2a37d6a7b161d00ae0063c3ab7,
+not a moving upstream main. Other differing versions: filelock, hf-xet,
+imageio, iniconfig, pycparser and typer; primary-only packages include SDNQ,
+sentencepiece and ruff. Fork changes between these revisions are the timestep
+fix and LTX activation/modulation changes, already migrated into local custom
+blocks. Comparing these video transformer copies found only newline differences;
+the new host does not rely on the modified Diffusers video forward.
+
+The control completed exit 0, 121 frames at 1280x704, finite stereo generated
+audio [2,240480] at 48000 Hz and successful cleanup. Both component snapshots
+have zero fault failures, temporary fallback tensors, source admission denials,
+quarantine, live source tickets and transfer-owned events. All monitor errors
+were null. Global absolute driver peak 5.142089844 GiB; sampled RSS peak
+28.414672852 GiB. Media structure is accepted, not perceptual/numerical parity.
+Evidence: outputs/migration_video_bf16_old_venv/console.log,
+metrics/modular_run.json and ltx23_modular_1280x704_5.0s_seed43.mp4 under that
+output directory. No dependency change or automatic follow-up run follows.
+
+### Image migration repeat after Windows reboot (2026-10-10)
+
+The approved repeat used the primary root uv environment and the same BF16
+image runner, model, DLL and settings as outputs/migration_image_gate. No code,
+dependency or budget changed. The only intended differences were the reported
+Windows reboot and a fresh output directory, outputs/migration_image_gate_after_reboot.
+This single repeat recovers selected historical image performance; it does not
+identify the earlier slowdown's root cause or prove general driver recovery.
+
+| Measurement | Historical image | Before reboot | After reboot |
+| --- | ---: | ---: | ---: |
+| CUDA warm steps 2-8, s/it | 1.395602 | 1.524931 | 1.387940 |
+| CUDA transformer phase with dependencies, s | 16.498256 | 18.657049 | 15.397565 |
+| Tracked encoder phase, s | 12.6624 | 20.6153 | 11.5705 |
+| Tracked pipeline total, s | 38.5135 | 50.7519 | 35.2571 |
+
+The after-reboot case is BF16, 1280x704, seed 43, eight steps, default real
+prompt, no PAG, one generation and one transformer preparation, with native
+encoder and transformer. Both use a 4 GiB weight budget; the image staging CLI
+value 0.5 resolves to 1.5 GiB total. Source cache and registered ceilings remain
+24.625 GiB. FP8 is disabled. Windows standby purge was skipped because the
+process token lacked SeProfileSingleProcessPrivilege; it was not a successful
+purge intervention. All sampled monitor error fields are null.
+
+Sampled absolute GPU driver peak is 6.878520966 GiB, baseline 1.026855469 GiB,
+reported baseline-relative peak 5.8517 GiB, sampled RSS peak 27.366 GiB.
+Both component snapshots have zero fault, guard/CUDA/capacity admission,
+source-read, source-cache admission, pool and execution-plan failures, zero
+temporary fallback tensors, quarantine, live source tickets and transfer-owned
+events. Encoder/transformer upload bytes remain 25,545,825,792 / 187,588,136,576.
+Host DMA enqueue counters are 4.199564 / 5.526979 seconds, not pure GPU DMA time.
+
+Execution exited 0 and saved the PNG. Its SHA256 is
+877876a4a8e1143a59e51a737ef3eb7f05a27980a6a44d20fed80d2ab581cced,
+identical to the pre-reboot image. DLL SHA256 remains
+755fcdd8dd1a72b371402750c071ca4b2146c0ac6bfe6b94c9b78f50f1ebb729.
+Evidence is the console.log, PNG and metrics JSON beneath the fresh output
+directory. Selected image functionality and performance are accepted; this
+does not extend video, FP8, arbitrary-model or Linux acceptance. No further
+CUDA run or dependency change is authorized by this result.
+
+### Video BF16 repeat after Windows reboot (2026-10-10)
+
+The separately approved repeat retained the primary root uv environment,
+video runner, local custom blocks and joined-span DLL from
+outputs/migration_video_bf16_vmm. It used 5 seconds, 1280x704, 24 fps,
+121 frames, 8 steps, seed 43, the default real prompt/image and no conditioning
+audio. Native encoder ceiling remained 4 GiB, transformer ceiling 1.5 GiB,
+staging 1.5 GiB and source cache/registration ceilings 24.625 GiB. Chunk sizes
+were 1024 with phase modulation, compact timesteps and in-place residuals.
+PyTorch host-cache release and CUDA streamed decode remained enabled.
+No code, dependency, budget or optimization changed.
+
+| Tracked measurement, s | Before reboot | After reboot |
+| --- | ---: | ---: |
+| Encoder | 13.2534 | 11.4153 |
+| Denoise | 203.7925 | 206.5028 |
+| Decode/save | 27.6654 | 27.9140 |
+| Total | 266.9297 | 266.7800 |
+
+Denoise was approximately 1.33% longer; the total was effectively unchanged
+in this single sequential comparison. Unlike the image repeat, no meaningful
+video acceleration was observed after reboot. This does not isolate transient
+driver state or prove a software regression. The 197.0318-second historical
+video remains unmatched in DLL, budget and forward settings.
+
+The runner calls the Windows standby helper before the transformer, but the
+approved command did not enable standby purge and no successful purge event
+was recorded. PyTorch host-cache release did execute; these are different
+operations. An explicit standby-purge comparison remains a separate gate,
+requiring successful privilege/event verification rather than assuming purge.
+
+Execution exited 0 with status completed, 121 frames at 1280x704 and finite
+generated stereo audio [2,240480] at 48000 Hz. MP4 SHA256 is
+56bd4cf1d6f20cd2c978fda6280902197a24fc179e303ac98f65ee02eb7fd891,
+identical to the pre-reboot video. Encoder and transformer snapshots show zero
+fault/guard/CUDA/capacity admission, source read/cache admission, pool and
+execution-plan failures; temporary fallback tensors, quarantine, live source
+tickets and transfer-owned events are zero. All monitor errors are null.
+Sampled absolute driver peak is 5.142089844 GiB, baseline 1.026855469 GiB,
+relative peak 4.115234375 GiB and sampled RSS peak 28.416580200 GiB.
+
+Evidence: outputs/migration_video_bf16_after_reboot/console.log,
+metrics/modular_run.json and ltx23_modular_1280x704_5.0s_seed43.mp4.
+Selected video functionality is accepted; timing is comparable to the previous
+primary-host run, not improved historical performance or general model support.
+No automatic follow-up test or change is authorized by this result.
+
+### Administrative Windows standby-purge full-video results (2026-10-10)
+
+User-run primary-host BF16 and saved TorchAO FP8 cases both completed a
+5-second, 1280x704, 24-fps, 121-frame, 8-step video, seed 43, real prompt/image,
+no input audio, generated audio enabled. Native encoder ceiling 4 GiB;
+transformer weight/staging ceilings 1.5 GiB; source/registration ceilings
+24.625 GiB. FF/normalization chunks 1024, phase/compact modulation and
+in-place residuals enabled; PyTorch host-cache release and CUDA streamed decode
+enabled. Compute compilation and FP8 chunk weight reuse were disabled.
+
+| Tracked measurement | BF16 + purge | Saved FP8 + purge |
+| --- | ---: | ---: |
+| Transformer load/prepare, s | 1.4042 | 32.4251 |
+| Transformer attach, s | 6.5249 | 10.4584 |
+| Encoder phase, s | 12.2153 | 9.7655 |
+| Denoise, s | 199.3626 | 218.5919 |
+| Decode/save, s | 26.8720 | 26.9401 |
+| Successful standby purge, s | 3.3066 | 3.9073 |
+| Total including purge, s | 262.4741 | 312.9841 |
+| Sampled absolute driver GPU peak, GiB | 5.142089844 | 5.923339844 |
+| Sampled RSS peak, GiB | 28.418369293 | 25.378753662 |
+
+Both report the successful before-transformer NtSetSystemInformation event,
+class 80, command 4, with SeProfileSingleProcessPrivilege. Native encoder
+and transformer snapshots have zero fault/guard/CUDA/capacity admission,
+source-read, cache-admission, pool and execution-plan failures, temporary
+fallback tensors, quarantine, live source tickets and transfer-owned events.
+All phase monitor errors are null. Both report 121 frames, 1280x704 and finite
+stereo audio [2,240480] at 48000 Hz. FP8 transport is executed for the FP8
+transformer only, not the BF16 encoder. Its model argument resolves the root
+F:/models/ltx23-distilled-fp8-weight-only; the source format remains saved
+TorchAO weight-only FP8. DLL path is build-joined-spans-cu128-20261006/Release/ddo_vmm.dll.
+
+Relative to the prior no-purge video, BF16 denoise fell from 206.5028 to
+199.3626 s (3.46%); total fell from 266.7800 to 262.4741 s. One sequential
+comparison does not isolate purge causality from system/cache state.
+FP8 denoise was 9.65% longer than BF16 and total 19.24% longer, while sampled
+RSS was about 3.04 GiB lower. Setup accounts for most additional total time;
+the metrics do not isolate the underlying cause. Full-video functionality is
+accepted for both selected cases; perceptual parity was not scored.
+
+Artifacts: outputs/migration_video_bf16_standby_purge and
+outputs/migration_video_fp8_standby_purge, each with metrics/modular_run.json
+and ltx23_modular_1280x704_5.0s_seed43.mp4. User-pasted source reports were
+39d34940-d442-4482-aa26-de3c7c13bd46 and
+a9babd70-e81b-417e-95aa-7e48457ce9e7. No new CUDA execution or source change
+was performed while recording these results.

@@ -3,7 +3,8 @@
 This repository owns model-specific runners, reproduction conditions and results.
 DDO owns generic runtime implementation, API documentation and technical gates.
 
-- [Recorded results](../experiments/dynamic_offload_results.md): dated measurements and limitations.
+- [Benchmark summary](benchmark-summary.md): start here for selected gains, losses and comparison limits.
+- [Detailed evidence log](../experiments/dynamic_offload_results.md): dated measurements and limitations, including historical and rejected cases.
 - [Historical native reproduction manifest](benchmark-reproduction.md): original image fixtures and binary identities.
 - [Image runners](ltx2-image.md) and [video runners](ltx2-video.md): current invocation and options.
 - [Host migration acceptance](migration-validation.md): environment-specific acceptance, not inherited performance.
@@ -29,6 +30,16 @@ paths/hashes and completion/errors alongside the summary. Preserve original
 measurements and dated acceptance, including failed or interrupted cases.
 Historical host runs are reference evidence, not validation of migrated runners.
 Only label comparisons matched when their recorded conditions justify it.
+
+Keep the reader-facing summary separate from the engineering log. Use one
+workload and output scope per table, identify the actual official control
+(including stream/context differences), and show memory trade-offs as well
+as speedups. Failed, interrupted or parity-rejected runs are not leaderboard
+entries. Do not attribute custom-model compute improvements to DDO alone.
+For Windows performance comparisons going forward, enable standby purge before
+the transformer, confirm a successful event and include its cost in total time.
+Missing privilege or a skipped purge must be labeled, not counted as executed.
+This remains an optional Windows helper, not a Linux benchmark requirement.
 
 Benchmark commands, hypotheses and acceptance criteria require user confirmation
 before CUDA execution or parameter changes. Stop at the approved failure or

@@ -1,5 +1,117 @@
 # Host migration validation
 
+## Current acceptance and revision boundary (2026-10-10)
+
+This section is the current status. Sections below are chronological engineering
+checkpoints: statements such as "pending", "unexecuted" and "CPU decoding is
+still active" describe their own checkpoint, not today's acceptance. Raw timings,
+artifact names and interrupted-run evidence remain unchanged.
+
+- BF16 image: the post-reboot repeat accepted the selected workload, with
+  1.387940 s CUDA warm-step mean and 35.2571 s tracked total.
+- BF16 native full video: selected five-second/eight-step migration accepted;
+  the administrative standby-purge run recorded 199.3626 s denoise and
+  262.4741 s tracked total.
+- Saved TorchAO FP8 native full video: selected five-second/eight-step migration
+  accepted; successful purge, 218.5919 s denoise and 312.9841 s tracked total.
+  This is compatibility acceptance, not a BF16 speedup or general recipe claim.
+- SDNQ INT4: selected image and full-video gates accepted. Corrected DDO video
+  recorded 319.6422 s denoise versus the completed 649.6985 s official streamed
+  leaf control. Interrupted attempts remain rejected evidence, not current gates.
+
+See the [reader-facing summary](benchmark-summary.md) and
+[detailed evidence](../experiments/dynamic_offload_results.md). These selected
+Windows results use the pinned Diffusers revision
+`e71ebc5858961e2a37d6a7b161d00ae0063c3ab7`; they do not validate a later merge.
+
+### Local Diffusers merge: compatibility implemented, CUDA not accepted
+
+The inspected local fork merge is
+`7d047b18092beebdb6d2aebadf1ccc254787dbc4`, with parents
+`be07836d91c3dfee7147445863a8a28dd8a3d186` and upstream `85c9fa4ca`.
+The host manifest, lockfile and installed environment still select `e71ebc5`.
+No dependency promotion, allocator rebuild or CUDA run accompanies this record.
+
+Video custom blocks at `a820889` support the new `diffusers.guiders.LTX2Guidance`
+export with the legacy import retained, and optional keyframe markers following
+the upstream rule. Missing markers preserve the LTX 2.3 path and existing
+positional arguments. Image custom blocks at `1eba529` document the shared-helper
+audit and add CPU contracts; image model math was not changed.
+The five public video runners now support both guidance export locations.
+The existing remote custom-code pins are not automatically promoted to these
+local commits; no push or remote-cache acceptance is implied.
+
+The selected pre-closure CPU checks passed 16 tests: 11 host migration contracts,
+three video compatibility contracts and two image compatibility contracts.
+The new guidance export was simulated on the pinned installed stack. This is
+not an actual import/generation gate against the merged fork. Optional keyframe
+projection was checked independently on CPU, not in a complete model forward.
+
+To promote the new Diffusers revision, first run a CPU code-only import/graph
+gate against that exact revision in isolation. Then request approval for a
+consolidated image/video CUDA sequence, retaining accepted DLL hashes, workload,
+capacities and optimization controls. Stop on the first import, memory,
+ownership, cleanup or media anomaly; do not reinterpret CPU checks as performance
+parity. Keep the current pinned environment available until promotion is accepted.
+This revision gate is still pending, separate from completed host migration.
+
+The closure additionally ran a real merged-source CPU probe using the existing
+host interpreter with `F:/Projetos/diffusers/src` first on the child process's
+Python import path, without installing or updating dependencies. Imports resolved
+to that source tree at `7d047b18092beebdb6d2aebadf1ccc254787dbc4`.
+`diffusers.guiders.LTX2Guidance`, `QwenImage21Transformer2DModel` and
+`AutoencoderKLQwenImage21` imported; local image/video distilled blocks both
+completed `init_pipeline()` without weights. CUDA lazy initialization was
+patched to raise, and `torch.cuda.is_initialized()` remained false. The process
+exited zero. Existing TorchAO import/deprecation warnings remain; this probe
+does not accept FP8 loading, CUDA forwards or timing on the merged revision.
+The code-only import/graph prerequisite above has therefore passed; CUDA
+revision promotion remains pending explicit command/criteria approval.
+
+### Commit closure CPU sequence
+
+On the pinned installed environment, the full host suite was rerun with
+`CUDA_VISIBLE_DEVICES=-1`, `PYTHONDONTWRITEBYTECODE=1`,
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` and the isolated `.hf_modules_cpu` cache:
+
+```powershell
+.venv/Scripts/python.exe -B -m pytest tests -q -p no:cacheprovider
+.venv/Scripts/python.exe -B modular_diffusers/custom_blocks/ltx2_video/tests/test_merge_compat_cpu.py
+.venv/Scripts/python.exe -B modular_diffusers/custom_blocks/ltx2_image/tests/test_merge_compat_cpu.py
+```
+
+Final results: host 35 tests and 10 subtests passed in 55.08 s; video three
+tests passed; image two tests passed. The initial host run had one structural
+test failure: its AST lookup assumed the first `try` statement was inference,
+but the import compatibility branch now comes first. The test now requires a
+unique `decoder_stages` loop by name and preserves the exact cross-runner
+decode comparison. No decoder or generation behavior was changed by this fix.
+`git diff --check` passed. No new CUDA test or benchmark was executed.
+
+QwenImage 2.1 requires newer model/VAE classes absent from the installed pinned
+stack. Its future custom blocks and runner are a separate model integration,
+not an implicit dependency upgrade for the accepted LTX environment.
+
+## Historical migration checkpoints
+
+The remainder preserves the status recorded at each checkpoint. Consult the
+current acceptance section above before interpreting a historical pending gate.
+
+## BF16 native VMM full-video migration (2026-10-10)
+
+The approved five-second, 24-fps, 1280x704, seed-43 eight-step gate completed
+with native encoder/transformer and streaming GPU decode. No source audio;
+generated audio enabled. Denoise 203.7925 s, decode/save 27.6654 s, total
+266.9297 s. Frame/audio checks passed and cleanup exited successfully.
+Both component snapshots have zero selected native failures, temporary fallback
+tensors, quarantine, live source tickets and transfer-owned events.
+The preserved joined-span DLL and explicit 4/1.5 GiB encoder/transformer
+ceilings were unchanged during execution. All memory monitor errors were null.
+See [results](../experiments/dynamic_offload_results.md) for the exact command,
+binary hash, memory definitions and historical comparison limitations.
+This accepts the selected BF16 video migration, not visual/numerical parity
+or arbitrary models. Saved FP8 migration remains pending separate approval.
+
 ## Selected SDNQ closure (2026-10-10)
 
 The corrected generic DDO SDNQ preparation passed 85 CPU tests and two
