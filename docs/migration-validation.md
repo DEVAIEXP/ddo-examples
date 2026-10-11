@@ -24,13 +24,14 @@ See the [reader-facing summary](benchmark-summary.md) and
 Windows results use the pinned Diffusers revision
 `e71ebc5858961e2a37d6a7b161d00ae0063c3ab7`; they do not validate a later merge.
 
-### Local Diffusers merge: compatibility implemented, CUDA not accepted
+### Local Diffusers merge: compatibility and selected BF16 CUDA acceptance
 
 The inspected local fork merge is
 `7d047b18092beebdb6d2aebadf1ccc254787dbc4`, with parents
 `be07836d91c3dfee7147445863a8a28dd8a3d186` and upstream `85c9fa4ca`.
 The host manifest, lockfile and installed environment still select `e71ebc5`.
-No dependency promotion, allocator rebuild or CUDA run accompanies this record.
+The initial CPU record involved no dependency promotion, rebuild or CUDA run.
+The later user-run BF16 CUDA gates below supersede its pending execution status.
 
 Video custom blocks at `a820889` support the new `diffusers.guiders.LTX2Guidance`
 export with the legacy import retained, and optional keyframe markers following
@@ -53,7 +54,7 @@ consolidated image/video CUDA sequence, retaining accepted DLL hashes, workload,
 capacities and optimization controls. Stop on the first import, memory,
 ownership, cleanup or media anomaly; do not reinterpret CPU checks as performance
 parity. Keep the current pinned environment available until promotion is accepted.
-This revision gate is still pending, separate from completed host migration.
+This revision gate was still pending at the CPU checkpoint; see the closure below.
 
 The closure additionally ran a real merged-source CPU probe using the existing
 host interpreter with `F:/Projetos/diffusers/src` first on the child process's
@@ -66,7 +67,35 @@ patched to raise, and `torch.cuda.is_initialized()` remained false. The process
 exited zero. Existing TorchAO import/deprecation warnings remain; this probe
 does not accept FP8 loading, CUDA forwards or timing on the merged revision.
 The code-only import/graph prerequisite above has therefore passed; CUDA
-revision promotion remains pending explicit command/criteria approval.
+execution remained pending at that CPU checkpoint.
+
+### User-run merged-source CUDA closure
+
+The user ran the corrected image/video commands using the fork source selected
+through PYTHONPATH=F:/Projetos/diffusers/src. A same-terminal import check
+reported that source tree; it remains clean at
+`7d047b18092beebdb6d2aebadf1ccc254787dbc4`. Raw reports do not embed an imported
+source revision, so this association rests on the terminal check and checkout
+inspection, not an invented JSON field. Manifest/lockfile remain at e71ebc5.
+
+Corrected image: accepted DLL755FCDD8..., CUDA warm mean1.370488s, CUDA phase
+14.871349s, tracked total38.4748s including2.1682s successful purge.
+Corrected video: accepted DLLEC5AB470..., denoise200.9234s, decode/save27.1645s,
+tracked total264.2061s including2.4353s successful purge. Video denoise was
+0.78% longer than the previous selected BF16 purge run, not a meaningful
+single-run speedup claim. The PNG and MP4 hashes match the earlier accepted
+artifacts. Selected native failures/fallbacks/quarantine, live tickets and
+transfer-owned events are zero; video completed eight native passes.
+
+The selected BF16 image/video merged-source CUDA gates are closed. Earlier
+pending statements above describe their CPU checkpoint. This does not promote
+the installed dependency, accept FP8/SDNQ on this fork, optional keyframe/DFR
+workflows, arbitrary models, Linux or statistical repeatability. The raw video's
+static validation string still says CUDA pending; preserve it as metadata, not
+as the outcome of this completed workload gate.
+See [dated results](../experiments/dynamic_offload_results.md) for binary hashes,
+conditions, artifact paths and the non-comparable initial wrong-DLL attempt.
+No further run follows automatically.
 
 ### Commit closure CPU sequence
 

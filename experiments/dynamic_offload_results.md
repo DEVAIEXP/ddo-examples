@@ -1,5 +1,89 @@
 # DDO native VMM benchmark results
 
+## User-run merged-source LTX BF16 closure — 2026-10-10
+
+Root host .venv, PYTHONPATH=F:/Projetos/diffusers/src, HF_HOME=F:/hf_cache.
+Same-terminal import verification resolved the fork source; the inspected clean
+checkout remains7d047b18092beebdb6d2aebadf1ccc254787dbc4. Raw reports do not
+embed a source revision. Installed manifest/lockfile remain pinned at e71ebc5.
+Local image/video custom-block commits:1eba529/a820889; no remote promotion.
+
+The first image attempt, outputs/merge_gate_image, used build/Release/ddo_vmm.dll,
+inspected SHA2564AC3D8B5396E0CD47A5DA0F08560EA0C6783697153BD1072B23DFB7F57CA7AA3.
+It completed an identical PNG but recorded1.690625s CUDA warm mean,17.016760s
+CUDA phase and44.1937s tracked total, with three purge events totaling4.9727s.
+The proposed command had omitted explicit DLL selection. This is not a matched
+historical binary/fork comparison: DLL and purge phases differ. An interrupted
+video attempt likewise is not a completed gate; teardown retention messages
+alone do not prove an inference failure or permanent process hang.
+
+### Corrected fixed-DLL runs
+
+The user executed the corrected commands presented in the conversation:
+image script scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py;
+video script scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py.
+BF16 encoder/transformer, real default prompts,1280x704,seed43,eight steps.
+Image: one generation,no PAG,no fake prompt,public native runtime,CUDA event
+timing,metrics level2,RSS monitoring. Video: real default image conditioning,
+no input audio,generated output audio,5seconds at24fps/121frames,local video
+custom-block clone,FF/norm chunks1024,phase/compact modulation,in-place
+residuals,rotary reuse,host-cache release and CUDA streamed decode.
+Optional compilation/kernels are off; no calibration,budget increase or rebuild.
+
+Image encoder/transformer ceilings4GiB; staging CLI0.5 resolves to total1.5GiB.
+Video encoder/transformer ceilings4/1.5GiB,total staging1.5GiB.
+Both source/registration ceilings24.625GiB. SSLKEYLOGFILE removed from the
+test terminal. DDO_PURGE_WINDOWS_STANDBY_*: BEFORE_RUN=0,
+AFTER_TEXT_ENCODER=0,BEFORE_TRANSFORMER=1,AFTER_RUN=0. Only the requested
+before-transformer purge executed, with successful privilege/event evidence.
+
+Image explicitly selected DDO_VMM_LIBRARY_PATH:
+E:/ProjetosIA/diffusers-dynamic-offloader/ddo-vmm-allocator/build-lifecycle-off-20261002/Release/ddo_vmm.dll.
+Inspected SHA256:755FCDD8DD1A72B371402750C071CA4B2146C0AC6BFE6B94C9B78F50F1EBB729.
+Video explicitly selected both environment and --ddo-vmm-library-path:
+E:/ProjetosIA/diffusers-dynamic-offloader/ddo-vmm-allocator/build-joined-spans-cu128-20261006/Release/ddo_vmm.dll.
+Inspected SHA256:EC5AB4700EE5D171CC06D8E9EC99C549F8D6CC3DFBE7FEB2683B93ADD0E829E6.
+
+| Measurement | Previous selected reference | Merged-source gate |
+| --- | ---: | ---: |
+| Image CUDA warm steps2-8, s/it | 1.387940 | 1.370488 |
+| Image CUDA phase with dependencies, s | 15.397565 | 14.871349 |
+| Image tracked total, s | 35.2571 | 38.4748 |
+| Video denoise, s | 199.3626 | 200.9234 |
+| Video decode/save, s | 26.8720 | 27.1645 |
+| Video tracked total, s | 262.4741 | 264.2061 |
+
+Image warm mean is1.26% lower; total includes2.1682s successful purge, unlike
+the prior post-reboot image reference with skipped purge. Video denoise is0.78%
+longer and total0.66% longer,including2.4353s purge. These single sequential
+observations are not statistical equivalence or causal fork/DLL/purge evidence.
+Sampled global absolute GPU peaks: image6.887031555GiB,video5.142089844GiB;
+sampled RSS peaks: image27.3697GiB,video28.418830872GiB. These are not
+physical model residency or shared-WDDM measurements.
+
+Both component snapshots report zero selected fault/guard/CUDA/capacity/read/
+cache-admission/pool failures,plan mismatches,temporary fallbacks and quarantine;
+final live tickets and transfer-owned events are zero. Image encoder collection
+38->0 and transformer711->0; video encoder9->0 and transformer0->0.
+Video records completed status,eight native execution-plan passes,121frames at
+1280x704 and finite stereo audio[2,240480] at48000Hz. All phase monitor errors
+are null. Snapshots are not a post-exit allocation census.
+
+PNG SHA256:877876A4A8E1143A59E51A737EF3EB7F05A27980A6A44D20FED80D2AB581CCED.
+MP4 SHA256:56BD4CF1D6F20CD2C978FDA6280902197A24FC179E303AC98F65EE02EB7FD891.
+Each matches its earlier selected primary-host artifact, not arbitrary-model
+quality acceptance. Artifacts: outputs/merge_gate_image_fixed_dll (PNG and
+metrics/run-slug JSON); outputs/merge_gate_video_fixed_dll (MP4 and
+metrics/modular_run.json). User report IDs:d4a4d3d6-9ddb-4c23-833a-83e0e58cc7a6
+and4231dc4b-eaba-42d8-a3e2-5fab0d341bf5. Original wrong-DLL report ID:
+845f0387-e0c9-427b-89eb-3c47b8dd28a4.
+
+Selected merged-source BF16 image/video CUDA closure passes. This does not
+promote dependencies,accept FP8/SDNQ on the new fork,optional keyframes,arbitrary
+models or Linux. The video's raw static validation label still says CUDA
+pending; preserve it unchanged as metadata, superseded for this workload by
+completed media/phase evidence. No extra CUDA test follows automatically.
+
 Start with the [benchmark summary](../docs/benchmark-summary.md) for selected
 completed comparisons and current recommendations. This page is the detailed
 engineering evidence log: historical pending statements, interrupted tests and

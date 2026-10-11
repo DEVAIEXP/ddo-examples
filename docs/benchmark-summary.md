@@ -122,6 +122,15 @@ Evidence: outputs/migration_image_gate_after_reboot.
 
 ## Reproduce or inspect
 
+Later merged-source BF16 gates using the local fork7d047b180 and the accepted
+workload-specific DLLs recorded image1.370488s CUDA warm mean and38.4748s
+tracked total; video200.9234s denoise and264.2061s tracked total. Confirmed
+standby purge ran only before the transformer. Both output hashes match earlier
+accepted artifacts and selected native failure counters are zero. Video denoise
+is0.78% longer than the preceding BF16 purge run; this is compatibility closure,
+not a new speedup claim or dependency-pin promotion. See the detailed record
+for the exact scope and the non-comparable initial image attempt.
+
 Use the root uv environment and the [image](ltx2-image.md) or
 [video](ltx2-video.md) runner guide. The [recording guide](benchmarks.md) defines
 required metadata; the [historical manifest](benchmark-reproduction.md)
