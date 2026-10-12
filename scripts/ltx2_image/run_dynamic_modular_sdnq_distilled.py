@@ -31,6 +31,7 @@ from diffusers_dynamic_offloader import (
     enable_offload,
     format_dynamic_offload_presets,
     is_wsl_environment,
+    maybe_purge_windows_standby_cache,
     remove_dynamic_offload,
 )
 from diffusers.loaders.lora_pipeline import LTX2LoraLoaderMixin
@@ -123,7 +124,12 @@ def parse_args():
     parser.add_argument("--crisp-lora-scale", type=float, default=CRISP_LORA_SCALE)
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_sdnq_distilled")
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument("--preset", default="auto", help="Preset do DDO para o transformer SDNQ.")
+    parser.add_argument("--preset", default="auto", choices=(
+        "auto", "one_shot_fast", "low_ram_safe", "wsl_compat", "warm_process",
+        "diffusers_leaf_offload_compat",
+    ), help="DDO packed SDNQ preset or official leaf control.")
+    parser.add_argument("--purge-before-transformer", action="store_true")
+    parser.add_argument("--memory-monitor", choices=("rss", "full"), default="full")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
     parser.add_argument("--build-ddo-profile", action=argparse.BooleanOptionalAction, default=False)
@@ -299,6 +305,7 @@ def main():
     if args.width % 32 != 0 or args.height % 32 != 0:
         raise ValueError("Width and height must be divisible by 32.")
     settings_environ = os.environ.copy()
+    settings_environ["DDO_PRESET"] = args.preset
     if args.resident_module_budget_gb is not None:
         settings_environ["DDO_RESIDENT_MODULE_BUDGET_GB"] = str(args.resident_module_budget_gb)
     if args.max_resident_module_budget_gb is not None:
@@ -312,8 +319,9 @@ def main():
         default_preset=args.preset,
         environ=settings_environ,
     )
-    ddo_config = replace(ddo_settings.config, execution_mode="sdnq_runtime")
-    ddo_settings = replace(ddo_settings, config=ddo_config, enabled=True)
+    leaf_control = args.preset == "diffusers_leaf_offload_compat"
+    ddo_config = replace(ddo_settings.config, execution_mode="plan" if leaf_control else "sdnq_runtime")
+    ddo_settings = replace(ddo_settings, config=ddo_config, enabled=True, plan=leaf_control)
 
     sdnq_model_path = SDNQ_MODEL_PATHS[args.bits]
     text_encoder_src = sdnq_model_path if args.text_encoder_bits is not None else MODEL_PATH
@@ -364,18 +372,23 @@ def main():
         "lora_enabled": args.soft_lora or args.crisp_lora,
         "lora_adapters": [],
         "dtype": str(DTYPE),
-        "offload_backend": "ddo_sdnq_runtime",
+        "offload_backend": "diffusers_leaf" if leaf_control else "ddo_sdnq_runtime",
         "group_offload_config": GROUP_OFFLOAD_CONFIG.copy(),
         "events": [],
         "steps": [],
     }
-    tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS)
+    from scripts.helpers.runner_reporting import environment_metadata
+
+    run_metrics["environment"] = environment_metadata()
+    tracker = RunTracker(
+        DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS, memory_monitor=args.memory_monitor
+    )
     record_event = tracker.record_event
     denoise_progress_callback = make_denoise_progress_callback(args, run_metrics)
 
     print(
         f"Using modular SDNQ: transformer={transformer_kind} text_encoder={text_encoder_kind} "
-        "offload=ddo_sdnq_runtime",
+        f"offload={run_metrics['offload_backend']}",
         flush=True,
     )
     print(f"  model_path={MODEL_PATH}", flush=True)
@@ -490,6 +503,12 @@ def main():
     del connector_state, connector_pipe, connectors
     del prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask
     cleanup_runtime_state(record_event, "cleanup_after_connectors")
+    purge_result = maybe_purge_windows_standby_cache(
+        "before_transformer", preset="one_shot_fast",
+        environ={"DDO_PURGE_WINDOWS_STANDBY_BEFORE_TRANSFORMER": "1" if args.purge_before_transformer else "0"},
+        record_event=record_event, print_message=SHOW_METRICS,
+    )
+    run_metrics["standby_purge"] = {"requested": args.purge_before_transformer, "result": purge_result}
 
     transformer_load_kwargs = {
         "subfolder": "transformer",
@@ -519,7 +538,10 @@ def main():
         settings=ddo_settings,
         config=ddo_config,
         component="transformer",
-        route="dynamic_offload",
+        route="diffusers_group_offload" if leaf_control else "dynamic_offload",
+        offload_type="leaf_level",
+        use_stream=True,
+        record_stream=False,
         execution_device=DEVICE,
         offload_device=OFFLOAD_DEVICE,
         low_cpu_mem_usage=LOW_CPU_MEM_USAGE,
