@@ -1,5 +1,65 @@
 # Primary host Linux environment (2026-10-11)
 
+## Current package transition (2026-10-12)
+
+### Audio selection now locked
+
+The reviewed host pyproject selects the explicit PyTorch CPU index for
+TorchAudio only when `sys_platform == 'linux'` (including WSL). The lock records
+`2.11.0+cpu` on that platform and preserves PyPI `2.11.0` for Windows. Torch,
+TorchVision and TorchCodec retain their explicit CUDA 13.2 index. This closes
+the manual audio-override reproducibility gap; historical instructions below
+describe preparation before this correction.
+
+`uv lock --check` passed. A locked/inexact dev-group sync dry-run against the
+existing `.venv-linux` proposed only refreshing editable DDO metadata, not
+changing Torch, Diffusers or audio/media packages. No actual sync or fresh-venv
+install was performed; this is resolution/dry-run evidence, not a second
+generation acceptance or a promise for all architectures/distributions.
+
+For reviewed environment setup, select the platform environment explicitly:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-linux uv sync --locked --group dev --inexact --link-mode copy
+```
+
+Use `.venv-wsl-gpu` instead on the selected WSL host; do not overwrite Windows
+`.venv`. Native builds and FFmpeg system dependencies remain separate.
+
+Only Diffusers was replaced in the existing host `.venv-linux` using:
+
+```bash
+uv pip install --python .venv-linux/bin/python --no-deps --link-mode copy 'diffusers==0.41.0'
+```
+
+Actual imports now resolve official `0.41.0` inside `.venv-linux/site-packages`,
+not the editable fork. Torch remains `2.12.1+cu132`, TorchAudio `2.11.0+cpu`,
+TorchCodec `0.15.0+cu132` and PyAV `18.1.0`. Imports passed with CUDA hidden and
+`torch.cuda.is_initialized()` false; `uv pip check` reported all 81 packages
+compatible. No automatic sync, Windows environment change or model generation
+was performed. Historical model results below retain their original fork.
+
+The host manifest/lock now select official Diffusers 0.41.0. The remaining
+installed override is the Linux/WSL audio-only CPU wheel, not Diffusers.
+Until platform-specific audio selection is locked, reproduce it after a reviewed
+sync with the command below; do not assume ordinary sync preserves the override:
+
+```bash
+uv pip install --python .venv-linux/bin/python --no-deps --link-mode copy \
+  --index-url https://download.pytorch.org/whl/cpu 'torchaudio==2.11.0+cpu'
+```
+
+Use the direct interpreter or `uv run --no-sync` for the accepted environment.
+This audio workaround is not a model CPU fallback or an instruction to change
+Windows packages. CUDA candidate and targeted model acceptance remain separate.
+
+## Historical preparation and acceptance (2026-10-11)
+
+Current official-package CPU acceptance: the host suite plus four selected
+DDO/allocator CPU files passed **152 tests and 10 subtests in 36.93 s** on
+2026-10-12, with CUDA hidden. This is separate from the historical results below
+and does not grant CUDA/model acceptance to the changed environment.
+
 The separate root `.venv-linux` was created with uv 0.12.21 and Python 3.12.14.
 The existing Windows `.venv` and DDO's older Linux environment were preserved.
 Preparation and subsequent selected CUDA/model gates are recorded below;

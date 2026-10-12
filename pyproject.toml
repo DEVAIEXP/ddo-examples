@@ -50,10 +50,17 @@ ddo-vmm-allocator = { path = "../diffusers-dynamic-offloader/ddo-vmm-allocator",
 torch = { index = "pytorch-cu132" }
 torchvision = { index = "pytorch-cu132" }
 torchcodec = { index = "pytorch-cu132" }
+# Audio decoding stays CPU-only on Linux/WSL; model inference remains CUDA.
+torchaudio = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
 
 [[tool.uv.index]]
 name = "pytorch-cu132"
 url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.ruff]
