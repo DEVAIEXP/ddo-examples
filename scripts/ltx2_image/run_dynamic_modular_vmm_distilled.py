@@ -46,6 +46,7 @@ from diffusers_dynamic_offloader import (
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
+from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
 from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
 from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
     LTX2ImageConnectorStep,
@@ -266,6 +267,8 @@ def parse_args():
         help="Denoise steps used only by --build-ddo-profile (default: 2).",
     )
     parser.add_argument("--pre-vae-cleanup-repeats", type=int, default=None)
+    parser.add_argument("--vae-leaf-offload", action="store_true",
+                        help="Opt in to no-stream leaf VAE decode; preserve resident decode otherwise.")
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_vmm")
     parser.add_argument(
         "--vmm-resident-weight-budget-gb",
@@ -1001,6 +1004,7 @@ def main():
         # the diagnostic runtime consumes no DDO hook or policy.
         transformer_load = from_pretrained_with_dynamic_offload(
             MODEL_PATH,
+            model_loader=LTX2ImageTransformer2DModel,
             dynamic_offload_config=dynamic_offload_config,
             apply_dynamic=False,
             **transformer_load_kwargs,
@@ -1013,7 +1017,7 @@ def main():
             source=MODEL_PATH,
             low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
             device_map=transformer_load_kwargs.get("device_map"),
-            loader="AutoModel",
+            loader="custom_blocks.LTX2ImageTransformer2DModel",
             resolved_class=prepared_transformer.__class__.__name__,
         )
 
@@ -1310,7 +1314,8 @@ def main():
         print(f"  DDO profile calibration complete: {ddo_profile_report}")
         return
 
-    t0 = step_start("Pass 2: Decode VAE")
+    vae_phase_start = time.time()
+    t0 = step_start("Load VAE for decode")
 
     event_t0 = time.time()
     vae = AutoencoderKLLTX2Video.from_pretrained(
@@ -1319,29 +1324,47 @@ def main():
         torch_dtype=DTYPE,
         low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
         local_files_only=LOCAL_FILES_ONLY,
-    ).to(DEVICE)
-    record_event("load_vae_to_cuda", time.time() - event_t0, source=MODEL_PATH)
+    )
+    vae_offload = enable_offload(
+        vae, component="vae", route="diffusers_group_offload" if args.vae_leaf_offload else "none",
+        execution_device=DEVICE, offload_device="cpu", use_environment=False,
+        offload_type="leaf_level", use_stream=False, low_cpu_mem_usage=False,
+        record_event=record_event,
+    )
+    if vae_offload.should_move_to_execution_device:
+        vae.to(DEVICE)
+    run_metrics["vae_decode_route"] = vae_offload.route
+    record_event("load_vae_for_decode", time.time() - event_t0, source=MODEL_PATH,
+                 route=vae_offload.route)
+    step_end("Load VAE for decode", t0)
+    t0 = step_start("Decode VAE")
 
     event_t0 = time.time()
     decode_pipe = LTX2ImageDistilledBlocks().sub_blocks["decode"].init_pipeline()
     decode_pipe.update_components(vae=vae)
-    image = decode_pipe(
-        latents=image_latent.to(device=DEVICE, dtype=DTYPE),
-        batch_size=latent_batch_size,
-        latent_height=latent_height,
-        latent_width=latent_width,
-        in_channels=latent_channels,
-        decode_timestep=DECODE_TIMESTEP,
-        decode_noise_scale=DECODE_NOISE_SCALE,
-        generator=generator,
-        output_type="pil",
-        output="images",
-    )[0]
+    with vae_offload.cleanup_on_error():
+        image = decode_pipe(
+            latents=image_latent.to(device=DEVICE, dtype=DTYPE),
+            batch_size=latent_batch_size,
+            latent_height=latent_height,
+            latent_width=latent_width,
+            in_channels=latent_channels,
+            decode_timestep=DECODE_TIMESTEP,
+            decode_noise_scale=DECODE_NOISE_SCALE,
+            generator=generator,
+            output_type="pil",
+            output="images",
+        )[0]
     record_event("vae_decode_modular_call", time.time() - event_t0)
+    tracker.record_ddo_metrics(vae_offload.metrics_snapshot(), "vae")
+    step_end("Decode VAE", t0)
+    t0 = step_start("Cleanup VAE")
 
-    del decode_pipe, vae, image_latent
+    del decode_pipe, vae_offload, vae, image_latent
     cleanup_runtime_state(record_event, "cleanup_after_vae_decode")
-    step_end("Pass 2: Decode VAE", t0)
+    step_end("Cleanup VAE", t0)
+    record_event("Pass 2: Decode VAE", time.time() - vae_phase_start,
+                 scope="aggregate_wall_time_not_an_additional_phase")
 
     t0 = step_start("Save Image")
     output_dir.mkdir(parents=True, exist_ok=True)

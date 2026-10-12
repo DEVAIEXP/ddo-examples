@@ -31,6 +31,7 @@ from diffusers_dynamic_offloader import (
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
+from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
 from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
 from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
     LTX2ImageConnectorStep,
@@ -261,6 +262,7 @@ def main():
     event_t0 = time.time()
     transformer_load = from_pretrained_with_dynamic_offload(
         MODEL_PATH,
+        model_loader=LTX2ImageTransformer2DModel,
         subfolder="transformer",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=True,

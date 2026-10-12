@@ -17,7 +17,7 @@ dependencies = [
     "pillow",
     "hf-xet",
     "sentencepiece",
-    "diffusers",
+    "diffusers==0.41.0",
     "diffusers-dynamic-offloader[vmm]",
     "ddo-vmm-allocator",
     "cuda-core==1.2.0",
@@ -45,7 +45,6 @@ dev = ["pytest>=9,<10", "ruff>=0.14.3"]
 package = false
 
 [tool.uv.sources]
-diffusers = { git = "https://github.com/DEVAIEXP/diffusers.git", rev = "e71ebc5858961e2a37d6a7b161d00ae0063c3ab7" }
 diffusers-dynamic-offloader = { path = "../diffusers-dynamic-offloader", editable = true }
 ddo-vmm-allocator = { path = "../diffusers-dynamic-offloader/ddo-vmm-allocator", editable = true }
 torch = { index = "pytorch-cu132" }

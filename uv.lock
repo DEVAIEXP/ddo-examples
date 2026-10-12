@@ -294,7 +294,7 @@ requires-dist = [
     { name = "cuda-bindings", specifier = "==13.4.1" },
     { name = "cuda-core", specifier = "==1.2.0" },
     { name = "ddo-vmm-allocator", editable = "../diffusers-dynamic-offloader/ddo-vmm-allocator" },
-    { name = "diffusers", git = "https://github.com/DEVAIEXP/diffusers.git?rev=e71ebc5858961e2a37d6a7b161d00ae0063c3ab7" },
+    { name = "diffusers", specifier = "==0.41.0" },
     { name = "diffusers-dynamic-offloader", extras = ["vmm"], editable = "../diffusers-dynamic-offloader" },
     { name = "einops", specifier = "==0.8.2" },
     { name = "hf-xet" },
@@ -341,11 +341,10 @@ provides-extras = ["cuda", "torch", "dev"]
 
 [[package]]
 name = "diffusers"
-version = "0.40.0.dev0"
-source = { git = "https://github.com/DEVAIEXP/diffusers.git?rev=e71ebc5858961e2a37d6a7b161d00ae0063c3ab7#e71ebc5858961e2a37d6a7b161d00ae0063c3ab7" }
+version = "0.41.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
-    { name = "httpx" },
     { name = "huggingface-hub" },
     { name = "importlib-metadata" },
     { name = "numpy" },
@@ -353,6 +352,10 @@ dependencies = [
     { name = "regex" },
     { name = "requests" },
     { name = "safetensors" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/bc/34a91d366fe8e546637d702403e4d8cd5dbdf705a15fb3725d34a7ab3416/diffusers-0.41.0.tar.gz", hash = "sha256:69dcced7230b6bc0b70b5c6cfdff1aa62da487ab52ae74b642e46b1b9bfacc47", size = 5026281, upload-time = "2026-10-06T06:24:14.884Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fe/c4/5bf8afd1ff3a8d99da7a18b1067ae0b4e2a037c38f3851890a989c511fd3/diffusers-0.41.0-py3-none-any.whl", hash = "sha256:ea8918b7dfd92ce793b6db689a551b8cd25d52c6c0fcd3ade0706a5fd2a25990", size = 6063887, upload-time = "2026-10-06T06:24:12.455Z" },
 ]
 
 [[package]]

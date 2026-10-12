@@ -91,6 +91,8 @@ def parse_args(argv=None):
     parser.add_argument("--output-type", choices=("video", "latent"), default="video")
     parser.add_argument("--stream-video-decode", action="store_true",
                         help="Opt in to temporal streaming video decode and staged audio VAE/vocoder.")
+    parser.add_argument("--vae-leaf-offload", action="store_true",
+                        help="Opt in to no-stream leaf video VAE decode; preserve audio/vocoder routes.")
     parser.add_argument("--decode-device", choices=("cpu", "cuda:0"), default="cpu",
                         help="CPU is the conservative initial decode; streaming GPU parity is not yet established.")
     parser.add_argument("--output-dir", default=str(ROOT / "outputs" / "ddo_modular_video"))
@@ -137,6 +139,8 @@ def parse_args(argv=None):
             parser.error("Denoise diagnostics require the native vmm/auto route and a separate diagnostic DLL.")
     if args.stream_video_decode and (args.output_type != "video" or args.decode_device != "cuda:0"):
         parser.error("Streaming video decode requires --output-type video --decode-device cuda:0.")
+    if args.vae_leaf_offload and not args.stream_video_decode:
+        parser.error("VAE leaf comparison requires --stream-video-decode --decode-device cuda:0.")
     if args.text_encoder_native_vmm:
         from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
@@ -811,12 +815,14 @@ def run(args):
         torch.cuda.empty_cache()
         invoke_stage(load_stage("trim"), payload, "cpu")
 
-        start = tracker.step_start("decode_and_save")
+        decode_and_save_start = time.time()
         stem = f"ltx23_modular_{args.width}x{args.height}_{args.seconds}s_seed{args.seed}"
         if args.output_type == "latent":
+            start = tracker.step_start("save_latents")
             output_path = output_dir / (stem + ".pt")
             torch.save({key: payload[key] for key in ("latents", "audio_latents", "audio_num_frames", "num_frames",
                                                      "width", "height", "seed") if key in payload}, output_path)
+            tracker.step_end("save_latents", start)
         else:
             decode_blocks = stages["decode"].sub_blocks
             decoded = {}
@@ -831,6 +837,7 @@ def run(args):
                                   ("audio_mel", LTX2VideoAudioMelDecoderStep(), ["audio_vae"]),
                                   ("audio", LTX2VideoVocoderStep(), ["vocoder"])]
             for name, decoder_block, component_names in decoder_stages:
+                load_start = tracker.step_start("load_decode_" + name)
                 current_pipe = make_phase_pipeline(decoder_block, args.decode_device,
                                                    args.distilled_model, args.local_files_only)
                 for component in component_names:
@@ -844,18 +851,41 @@ def run(args):
                     current_pipe.vae.use_framewise_decoding = True
                 elif name == "audio":
                     audio_rate = current_pipe.vocoder.config.output_sampling_rate
-                current_pipe.to(args.decode_device)
+                vae_decode_result = None
+                if name == "video" and args.vae_leaf_offload:
+                    vae_decode_result = enable_offload(
+                        current_pipe.vae, component="vae", route="diffusers_group_offload",
+                        execution_device=args.decode_device, offload_device="cpu", use_environment=False,
+                        offload_type="leaf_level", use_stream=False, low_cpu_mem_usage=False,
+                        record_event=tracker.record_event,
+                    )
+                    metrics["vae_decode_route"] = vae_decode_result.route
+                else:
+                    current_pipe.to(args.decode_device)
+                    if name == "video":
+                        metrics["vae_decode_route"] = "none"
+                tracker.step_end("load_decode_" + name, load_start)
                 payload["output_type"] = "pil"
                 input_device = "cpu" if args.stream_video_decode and name == "video" else args.decode_device
-                invoke_stage(current_pipe, payload, input_device)
+                decode_start = tracker.step_start("decode_" + name)
+                if vae_decode_result is not None:
+                    with vae_decode_result.cleanup_on_error():
+                        invoke_stage(current_pipe, payload, input_device)
+                    report(vae_decode_result.metrics_snapshot(), "vae_decode")
+                else:
+                    invoke_stage(current_pipe, payload, input_device)
+                tracker.step_end("decode_" + name, decode_start)
                 if name != "audio_mel":
                     decoded[name] = payload.pop("videos" if name == "video" else "audio")
                 if args.stream_video_decode and name == "audio":
                     payload.pop("generated_mel_spectrograms", None)
+                cleanup_start = tracker.step_start("cleanup_decode_" + name)
                 current_pipe.unload_components(component_names)
+                del vae_decode_result
                 current_pipe = None
                 gc.collect()
                 torch.cuda.empty_cache()
+                tracker.step_end("cleanup_decode_" + name, cleanup_start)
             output_path = output_dir / (stem + ".mp4")
             frames, waveform = decoded["video"][0], decoded["audio"][0].float().cpu()
             if len(frames) != payload["num_frames"] or any(frame.size != (args.width, args.height) for frame in frames):
@@ -865,9 +895,12 @@ def run(args):
             metrics["decoded_media"] = dict(frames=len(frames), width=args.width, height=args.height,
                                            audio_shape=list(waveform.shape), audio_sample_rate=audio_rate,
                                            audio_finite=True)
+            save_start = tracker.step_start("save_video")
             encode_video(frames, fps=args.frame_rate, output_path=str(output_path),
                          audio=waveform, audio_sample_rate=audio_rate)
-        tracker.step_end("decode_and_save", start)
+            tracker.step_end("save_video", save_start)
+        tracker.record_event("decode_and_save", time.time() - decode_and_save_start,
+                             scope="aggregate_wall_time_not_an_additional_phase")
         metrics["status"] = "completed"
         metrics["output_path"] = str(output_path)
         maybe_purge_windows_standby_cache(settings, "after_run", record_event=tracker.record_event)
