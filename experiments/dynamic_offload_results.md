@@ -1,5 +1,69 @@
 # DDO native VMM benchmark results
 
+## Selected WSL BF16 closure - 2026-10-12
+
+User-executed single runs on RTX 3060 Ti 8 GiB, Ubuntu 22.04.3 WSL2,
+Python 3.12.12, Torch 2.12.1+cu132 and official Diffusers 0.41.0.
+See [installation/build recipe](../docs/wsl-host-environment.md).
+Native candidate: build-wsl-idle-trim-20261012/libddo_vmm.so, SHA256
+5915cca767c89ab7606c04f2001c9eddffa762386c852cc9f517708a2d03584c.
+All native routes used 384 MiB staging. RAM is process RSS; GPU peaks are
+sampled absolute driver usage including baseline, not PyTorch allocated bytes.
+Windows standby purge does not execute on WSL.
+
+| Workload | Source registration MiB | Denoise wall s | Tracked total s | Absolute GPU peak GiB | RSS peak GiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LTX image, 1280x704, 8 steps, seed 43 | 128 | 104.6665 | 186.0851 | 7.2150 | 26.3132 |
+| LTX image, same workload | 512 | 85.9101 | 167.4604 | 7.2863 | 26.3148 |
+| LTX conditioned video, 1280x704, 5 s/24 fps, 8 steps, seed 43 | 512 | 367.6186 | 512.3510 | 5.3179 | 27.6250 |
+| Qwen 2.1 base, 512x512, 20 steps, seed 42 | 512 | 88.4189 | 187.3762 | 6.7208 | 22.3319 |
+
+Image: real native prompt encoding, BF16, no PAG, 4 GiB GPU weight ceiling,
+24.625 GiB retained source capacity, local custom blocks and model snapshot
+5cd2f057b18d3964f7dc1ce9ab061e9dd22754b9. First-step times 35.0077/39.8262 s;
+remaining-seven-step host means 9.9534/6.5847 s. The larger registration ceiling
+reduced steady-state intervals by 33.8% and denoise wall by 17.9%, but first-step
+time grew. Read bytes and hit/miss counts matched. Native register/unregister
+accumulated durations fell from 70.7361 to 47.6829 s; these may overlap work
+and must not be added to phase wall time.
+
+Video: OzzyGT/LTX-2.3-Distilled-1.1, local blocks, real default prompt,
+man_guitar.png plus diff_vocal_song.mp3 conditioning. Native encoder/transformer
+ceilings 4/1.5 GiB; retained source 24.625 GiB. Feed-forward/normalization chunks
+1024, phase modulation, compact timesteps, inplace residuals and RoPE reuse;
+no experimental compute kernels/compilation. GPU streaming decode produced
+121 frames and finite stereo 48 kHz audio. Decode-video wall 25.1970 s.
+45.9523 s/step is the denoise phase average including startup, not steady-state.
+This is not matched to earlier Windows/native-Linux runs without input audio.
+
+Qwen: model snapshot d26bb61231c349cf6b7896fa83353113880e1ba3, local blocks,
+default capybara prompt, BF16, CFG 1, native KV cache, 4 GiB GPU weight ceiling,
+16 GiB source capacity. Twenty callbacks completed; later intervals about
+3.65 s are asynchronous host observations, not GPU step timings. Denoise wall
+includes CPU readback. Text encode 87.0648 s; VAE decode 1.1395 s. VAE executed
+official no-stream leaf, untiled stock AutoencoderKLQwenImage21, with no local
+cacheless/padding/residual optimizations. Decode GPU/RSS peaks 3.1733/3.0856 GiB.
+Global RAM peak belongs to text encoding.
+
+Media were saved and selected native faults, temporary tensors, pool failures,
+quarantine and source admission denials were zero. Video encoder/transformer
+and Qwen transformer snapshots also show zero live tickets/transfer-owned
+events. Reports do not establish final driver-memory release or visual parity.
+Local custom-block HEADs were not recorded in JSON; do not infer revision parity.
+
+Evidence (ignored local outputs; phase tables remain in these JSON artifacts):
+
+- outputs/ltx_image_modular_vmm/wsl_bounded_registration_20261012
+- outputs/ltx_image_modular_vmm/wsl_registered512mib_20261012
+- outputs/ltx_video_wsl_audio_5s_20261012
+- outputs/qwen21_wsl_vmm_leaf_512_20261012
+- outputs/wsl_host_registration_probe.json
+
+The standalone probe passed 1152 MiB twice and rejected 1216 MiB at 64 MiB
+resolution. The 384+512 MiB model settings leave margin below that observation;
+registration churn remains significant. This closes the finite BF16 WSL sequence,
+not SDNQ/FP8, arbitrary models, matched speedups over leaf, or installation delivery.
+
 ## Windows SDNQ INT4 image closure with official Diffusers 0.41.0 — 2026-10-11
 
 The user completed the selected Qwen and LTX image comparisons in the primary
@@ -4552,3 +4616,64 @@ observed performance regression in the LTX cases. Single runs do not isolate
 small timing changes from cache/OS/observer variation. This does not validate
 all presets, FP8/SDNQ, other resolutions, Linux/WSL, or the historical conventional
 LTX image apps. See docs/official-diffusers.md for transition and limitations.
+
+## 2026-10-12: native Linux official Diffusers/cgroup candidate targeted image gate
+
+User-approved single generation, not a rerun of the closed platform matrix.
+Official Diffusers 0.41.0 replaced only the editable fork in host `.venv-linux`;
+Torch remains 2.12.1+cu132 and TorchAudio 2.11.0+cpu. Candidate allocator
+build-linux-cgroup-review-20261012/libddo_vmm.so SHA256
+5a49e0a6acd672186af116ee31fe1409bd33c605b2846bfc5f9d4ae42d79907c.
+The cgroup-root fix passed native CPU, compilation/linkage, fresh-process trim
+and three small source/cache contracts. The changed package environment passed
+152 CPU tests and 10 subtests before this generation.
+
+Host HEAD 153d79852d21c29de18eb566740c07526e87d8eb; local image custom-block
+HEAD 1eba529b4a838a8590fbc362ad2249dd8f8b01ea, with existing dirty metadata/docs.
+Allocator HEAD bf3280600f0a8695547b1847459989e75b8eac9a with reviewed dirty
+cgroup header/test. No immutable source checkpoint or promotion is claimed.
+Use the direct host .venv-linux interpreter and explicit candidate environment
+selection; native bootstrap installs before CUDA. Checkpoint snapshot remains
+5cd2f057b18d3964f7dc1ce9ab061e9dd22754b9 from the local cache.
+
+BF16 native encoder/transformer, resident VAE; real default prompt, 1280x704,
+seed 43, 8 steps, one generation, no PAG. Active weights 4 GiB, staging
+1.5 GiB total (runner --vmm-staging-buffer-gb 0.5), persistent source and
+registration 24.625 GiB each. No trim, cuBLAS clear, new tiling, compute tuning
+or Linux standby purge. VAE executed route none/resident. Offline cached load.
+
+| Phase | Wall time (s) | Sampled absolute GPU peak (GiB) | Process RSS peak (GiB) |
+| --- | ---: | ---: | ---: |
+| Prompt encoding | 11.2894 | 6.485229 | 25.1058 |
+| Generate including setup | 18.8913 | 6.723999 | 27.3354 |
+| VAE load | 0.6703 | 2.613708 | 2.8936 |
+| VAE decode | 0.3389 | 2.953552 | 1.6572 |
+| VAE cleanup | 0.1486 | 2.953796 | 1.6889 |
+| Save image | 0.1981 | 1.838562 | 1.6619 |
+
+Tracked total 31.5387 s; global absolute GPU peak 6.723999 GiB, RSS 27.3354 GiB.
+GPU baseline 0.782227 GiB; baseline-relative global delta 5.9418 GiB, not the
+absolute peak. Sampling interval 100 ms. No monitor errors. Nested VAE aggregate
+1.1588 s is not another phase. Denoise modular call 12.8468 s; completed CUDA
+phase 13.124732 s, first CUDA step 5.775473 s, mean steps 2–8 1.049894 s/step.
+Eight complete intervals, timing.failed=false. Callbacks are not CUDA timing.
+
+Previous fork-based resident control: total 40.2959 s, denoise wall 17.1203 s,
+first CUDA step 10.006696 s, warm mean 1.056121 s/step, absolute GPU 6.559631 GiB,
+RSS 27.3297 GiB. The difference is concentrated in encoder/first-step setup;
+single runs across changed package/binary/source state do not isolate a
+Diffusers-release speedup. GPU baseline also differs; no sampled-memory guarantee
+or allocator-only timing attribution. Steady-state is approximately preserved.
+
+Exit 0, plausible 1280x704 PNG inspected and byte-identical to the Linux control:
+SHA256 dfbf135a833b5a77f4574a98cebd3be84d19fc569b79de8dd5f18457c52d64c1.
+No reported native fault/pool/admission/read failures, temporary fallbacks,
+quarantine or monitor errors. Transformer tickets collected 409 to zero.
+Pre-unload snapshots still contain source bytes; process success does not
+constitute a measured zero-backing allocator teardown assertion.
+
+Artifacts: outputs/ltx_image_official_linux_cgroup_gate_20261012, PNG and
+metrics/<run_slug>.json. Raw artifacts remain unchanged. Targeted native Linux
+official-package/candidate compatibility PASS for this workload only. No video,
+Qwen, FP8/SDNQ or general-model acceptance is inherited; no further matrix run,
+commit, default binary promotion or publication occurred.

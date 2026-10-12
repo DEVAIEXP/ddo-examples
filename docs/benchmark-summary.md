@@ -26,7 +26,11 @@ optimizations belong to the independent Modular Diffusers custom blocks.
 
 Start with the [closed Windows/native Linux LTX matrix](benchmark-matrix.md)
 for denoise time, labeled iteration timing, full totals and VAE/global memory.
-WSL is explicitly unavailable; full phase tables remain in the evidence log.
+The matrix retains its original platform scope. Selected WSL BF16 compatibility
+subsequently passed LTX image, conditioned five-second video and Qwen with leaf
+VAE; see the dated [WSL results](../experiments/dynamic_offload_results.md) and
+[environment recipe](wsl-host-environment.md). Registration constraints require
+smaller explicit ceilings; these are not matched cross-platform speedup rows.
 
 ## Where DDO helped
 
