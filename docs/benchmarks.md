@@ -4,10 +4,12 @@ This repository owns model-specific runners, reproduction conditions and results
 DDO owns generic runtime implementation, API documentation and technical gates.
 
 - [Benchmark summary](benchmark-summary.md): start here for selected gains, losses and comparison limits.
+- [Benchmarks by model](benchmarks/README.md): shared comparison rules, closed LTX cases and Qwen/platform coverage gaps.
 - [Detailed evidence log](../experiments/dynamic_offload_results.md): dated measurements and limitations, including historical and rejected cases.
 - [Historical native reproduction manifest](benchmark-reproduction.md): original image fixtures and binary identities.
 - [Image runners](ltx2-image.md) and [video runners](ltx2-video.md): current invocation and options.
 - [Host migration acceptance](migration-validation.md): environment-specific acceptance, not inherited performance.
+- [Linux/WSL continuation](platform-validation-handoff.md): finite post-Windows gates, environment/binary checks and version-cut boundaries.
 
 ## Recording a case
 
@@ -48,3 +50,22 @@ memory anomaly boundary. Moving documentation authorizes no execution.
 Generic defects found through model testing are fixed in DDO with appropriate
 technical contracts; model-specific optimizations remain in the host/custom
 blocks. Document Windows and Linux acceptance separately.
+
+## VAE decode capacity recommendations
+
+These recommendations apply to the VAE phase only, not the transformer preset.
+Do not extrapolate measured process RSS into an exact system-RAM requirement.
+
+| VAE constraint | Suggested route | Tradeoff / boundary |
+| --- | --- | --- |
+| Resident decode fits the available VRAM | Keep resident decode | Avoid repeated weight uploads; selected video case is faster. |
+| VRAM is tight and enough CPU RAM remains | Try leaf VAE offload | Reduce GPU weight residency at the cost of CPU RAM and uploads. |
+| Resident decode does not fit and leaf is not viable with available RAM | Try supported spatial tiling; preserve/use temporal streaming for video | Reduce activation/output-window pressure; measure time and inspect quality. |
+
+Tiling is the next capacity fallback for VAE decode, not a guarantee that any
+RAM/VRAM combination will fit. It does not remove model-weight storage or the
+CPU memory needed for assembled output frames. Smaller tiles/overlaps can cost
+more time and change seams or temporal behavior; retain validated settings or
+run a quality gate before recommending a change. If weights or assembled output
+still cannot fit, reducing resolution/duration or using a different supported
+execution route may be necessary. This recommendation authorizes no new test.

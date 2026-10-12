@@ -1,5 +1,488 @@
 # DDO native VMM benchmark results
 
+## Windows SDNQ INT4 image closure with official Diffusers 0.41.0 — 2026-10-11
+
+The user completed the selected Qwen and LTX image comparisons in the primary
+`.venv`: Python 3.12.11, Torch 2.12.1+cu132, Diffusers 0.41.0,
+Transformers 5.15.1, SDNQ 0.2.7. These use normal PyTorch allocation, not
+native VMM. DDO preserves SDNQ backend math and selects `sdnq_runtime`;
+the controls select official streamed leaf offload in plan mode. No quantized
+forward, allocator DLL or BF16 runner was changed for this comparison.
+
+Common controls: real default prompts, no LoRA/PAG, original BF16 auxiliary
+components, resident untiled stock VAE, RSS monitor sampled every 100 ms,
+Windows standby purge confirmed before transformer loading. Qwen is base,
+512x512, 20 steps, seed 42, CFG 1, native KV cache. Its transformer is
+`OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit` at
+`59d4c3610379d91fb023c4d0b6527c76755491c4`, with dynamic SDNQ/Hadamard.
+LTX image is 1280x704, eight steps, seed 43, using
+`elismasilva/ltx2.3-image-distilled-1.1-sdnq-int4` and the existing local
+custom transformer. No revision field was recorded for that LTX checkpoint;
+do not invent a pin or a matched source-revision guarantee.
+
+| Selected workload / transformer route | Denoise wall s | Phase-average s/step | Tracked total s | Global absolute GPU peak GiB | Global RSS peak GiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen INT4 / DDO packed runtime | 18.8056 | 0.9403 | 36.6166 | 3.6831 | 19.0167 |
+| Qwen INT4 / official streamed leaf | 24.2629 | 1.2131 | 39.6060 | 3.6831 | 19.0174 |
+| LTX image INT4 / DDO packed runtime | 11.7399 | 1.4675 | 46.5646 | 7.1031 | 25.9857 |
+| LTX image INT4 / official streamed leaf | 21.5413 | 2.6927 | 50.0533 | 7.0979 | 25.9418 |
+
+Denoise decreased by 22.5% in Qwen and 45.5% in LTX image for these
+single-run DDO-versus-leaf pairs. This does not establish repeated-run
+statistics or a universal backend speedup. Qwen wall timing includes final CPU
+latent readback. LTX records its existing modular-call wall event; callback
+intervals are asynchronous and are not synchronized steady-state timings.
+Tracked totals include loading, attachment, purge, decode and save, but not
+a separate first download or complete process startup.
+
+Qwen's denoise-only sampled absolute GPU peak is 2.8745 GiB for DDO versus
+1.9995 GiB for leaf; denoise RSS is 7.1870 versus 7.6030 GiB. The same
+global GPU peak is set by later VAE work, and global RSS by encoder cleanup.
+DDO trades higher transformer-phase GPU residency for speed here.
+LTX's legacy generation phase aggregates connectors, loading, purge, attachment
+and denoise: absolute GPU peaks are 7.1031/7.0979 GiB and RSS peaks
+17.5173/11.8542 GiB (DDO/leaf). These are not isolated transformer compute
+peaks. Its decode-phase GPU/RSS peaks are 4.9702/11.4389 versus
+2.7964/13.1953 GiB, showing that retained normal-allocator memory can affect
+the later phase even though both VAEs are resident. Do not interpret GPU usage
+as quantized weight size or add per-phase peaks together.
+
+All recorded memory-monitor errors are null; purge events took Qwen
+1.6166/1.7912 s and LTX 2.3656/2.6401 s (DDO/leaf). Both Qwen JSONs
+report `completed`, 20 executed steps and no error. LTX's older schema has no
+status field; eight callback entries, completed save metrics and valid 1280x704
+PNGs establish the selected completion, rather than treating a missing field
+as an explicit success flag.
+
+DDO and leaf produced byte-identical PNGs within each quantized model:
+
+- Qwen: `a42313df0e4163f6c112b3ce24b0e7076e5780a9fe9b0330d8ec3651cce97eba`.
+- LTX image: `d8ed344a244f150dc36d0c3cc6f2c8b7a84eb08d6c058cbf6f28d2a8bb34cff2`.
+
+The images were visually inspected and are plausible. This proves route parity
+for the selected SDNQ outputs, not quantized-versus-BF16 numerical or perceptual
+equivalence. Raw JSONs and images remain unchanged.
+
+Recent BF16 native-VMM references on the same official package remain separate:
+Qwen denoise 17.6735 s / total 36.6395 s; LTX image denoise 13.7679 s /
+total 35.2343 s. Thus current LTX INT4 DDO denoise is about 14.7% shorter
+than that BF16 observation, unlike the older INT4 result of 16.4873 s, but
+the full INT4 runner is slower. Encoder/offload and setup paths differ from
+native BF16; this is not an isolated quantization comparison. Historical
+results are preserved and must not replace these current package observations.
+
+Evidence under primary-host `outputs/`:
+
+- `qwen21_sdnq_int4_ddo_512/metrics.json` and `image.png`.
+- `qwen21_sdnq_int4_leaf_512/metrics.json` and `image.png`.
+- `ltx_image_sdnq_int4_ddo_041/metrics/ltx23_image_distilled_modular_sdnq_ddo_runtime_sdnq4_text_encoder_original_nopag_nolora_1280x704_steps8_seed43.json` and the same-stem PNG in its parent.
+- `ltx_image_sdnq_int4_leaf_041/metrics/ltx23_image_distilled_modular_sdnq_ddo_runtime_sdnq4_text_encoder_original_nopag_nolora_1280x704_steps8_seed43.json` and the same-stem PNG in its parent.
+
+This closes the selected Windows INT4 image DDO/leaf comparisons, not INT8,
+quantized encoders, Turbo, all recipes/models, Linux/WSL or a new video gate.
+No further CUDA run or budget tuning follows automatically.
+
+## Qwen-Image 2.1 cuBLAS cleanup before leaf VAE — 2026-10-11
+
+User completed outputs/qwen21_vae_leaf_blas_trim_enabled with the same
+build-idle-trim-cu128-20261011 candidate and 1024x1024/base BF16/20-step/seed-42
+workload as the trim pair below. Added --clear-cublas-workspaces-before-vae
+to --release-native-cache-before-vae; official nonstreamed leaf VAE, cacheless
+decode and residual reuse remained enabled. No tiling, direct padding or extra
+standby purge; the before-transformer standby control was unchanged.
+
+| Observation | Trim only | cuBLAS cleanup + trim |
+| --- | ---: | ---: |
+| VAE-load sampled absolute driver GPU peak, GiB | 2.2378 | 1.0776 |
+| Decode sampled absolute driver GPU peak, GiB | 3.9272 | 4.7456 |
+| Decode wall time, s | 1.8943 | 2.1736 |
+| Cleanup phase wall time, s | 0.1100 | 0.1201 |
+
+Before cuBLAS cleanup, one active 8,519,680-byte workspace retained
+1,247,805,440 native mapped bytes. Clearing it reduced all native mapped/live/
+pending/quarantined gauges to zero, without failures. The subsequent explicit
+trim released nothing further: normal retirement already freed the backing.
+This confirms the workspace source of retention in this selected real workload.
+Zero native pool bytes do not imply zero driver/context VRAM or host source RAM.
+
+PNG bytes match SHA256
+1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45.
+Twenty steps completed without monitor/native failures, mismatches or temporary
+tensors. Denoise 51.5893 s, separate VAE load 0.8326 s, decode RSS peak 4.4638
+GiB, total 72.1282692 s. Full cleanup worked but did not produce the lowest decode
+peak/time. Keep these explicit options; do not promote an automatic default or
+claim that a lower pre-VAE baseline guarantees lower activation-time peaks.
+Single sequential observations; no general model/platform acceptance.
+
+## Qwen-Image 2.1 native idle trim before leaf VAE — 2026-10-11
+
+User completed qwen21_vae_leaf_trim_control and qwen21_vae_leaf_trim_enabled
+under outputs, both with candidate build-idle-trim-cu128-20261011 DLL SHA256
+468A854EB550C6299C3DE785B65ECD4F4DF382C488B6F1C83AA6899983F12CFE.
+Same base BF16 1024x1024, 20 steps, seed 42, capybara prompt, CFG 1, native KV,
+4 GiB weight / 0.625 GiB staging / 16 GiB source, RSS, cacheless/residual VAE,
+official nonstreamed VAE leaf, no tiling/direct padding. Purge before transformer
+only. The second case additionally enabled --release-native-cache-before-vae.
+
+| Observation | No explicit trim | Explicit trim |
+| --- | ---: | ---: |
+| Decode wall time, s | 1.8069 | 1.8943 |
+| Decode sampled absolute driver GPU peak, GiB | 5.0542 | 3.9272 |
+| Decode sampled process RSS peak, GiB | 4.4630 | 4.5544 |
+| VAE load wall time, s | 0.8490 | 0.8469 |
+| Denoise wall time, s | 52.1545 | 52.8167 |
+| Tracked total, s | 71.3454 | 72.5433 |
+
+Trim phase took 0.1100 s. Both completed 20 native plan passes without
+monitor/native failures, mismatches or temporary tensors. Both PNG bytes
+match accepted SHA256
+1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45.
+Decode sampled peak fell 1.1270 GiB, but this is NOT the amount freed directly:
+native trim snapshots show only 2,097,152 bytes released (1,247,805,440 to
+1,245,708,288 mapped bytes). One live 8,519,680-byte lease pins the remaining
+whole backing; it is correctly preserved. No quarantine/failures. The snapshot
+does not identify this lease's owner; investigate it before declaring complete
+transformer cleanup or causal peak savings. Single sequential measurements,
+no automatic default promotion, no forced live release or VAE VMM acceptance.
+
+## Qwen-Image 2.1 VAE official leaf offload comparison — 2026-10-11
+
+User completed outputs/qwen21_vae_leaf_20steps, repeating the accepted base
+BF16 1024x1024, 20-step, seed-42 workload below and adding --vae-leaf-offload.
+Cacheless decode and residual aliasing remained enabled; tiling and direct
+padding remained disabled. Official Diffusers VAE leaf offload used CPU storage,
+CUDA onload and use_stream=false, without a warm-up decode. Same preserved DLL,
+4 GiB weight / 0.625 GiB staging / 16 GiB source cache, RSS monitoring and
+successful standby purge before transformer. No purge before VAE was requested.
+
+| Decode observation | Resident VAE | VAE leaf |
+| --- | ---: | ---: |
+| Wall time, s | 1.2704 | 1.8115 |
+| Sampled absolute driver GPU peak, GiB | 6.9356 | 5.0542 |
+| Sampled process RSS peak, GiB | 4.5016 | 4.4934 |
+| Separate VAE load, s | 0.9083 | 0.8647 |
+
+Leaf reduced sampled decode GPU peak by 1.8814 GiB (27.13%) while adding
+0.5411 s (42.59%) to decode in this pair. Denoise was 51.3993 s and tracked
+total 70.6702058 s; total-time variation must not be attributed to VAE offload
+alone. Image PNG bytes exactly match the accepted resident and original native
+20-step references: SHA256
+1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45.
+Completed 20 native plan passes, with no monitor errors, native failures,
+plan mismatches or temporary tensors; live tickets/transfer-owned events were
+zero at collection. Selected workload only, not general shape/model support.
+Keep leaf opt-in as a memory/time tradeoff, not an automatic faster default.
+
+## Qwen-Image 2.1 accepted untiled VAE: 20-step closure — 2026-10-11
+
+User completed outputs/qwen21_vae_accepted_20steps: base BF16, 1024x1024,
+20 steps, seed 42, the capybara prompt below, CFG 1 and native KV cache.
+Executed local cacheless decode and residual aliasing, with tiling and direct
+padding disabled. Same preserved build-joined-spans-cu128-20261006 DLL,
+4 GiB weight budget, 0.625 GiB staging, 16 GiB source cache and RSS monitoring;
+Windows standby purge succeeded. Used the host .venv and local Diffusers fork.
+
+- Decode: 1.2704 s, sampled absolute driver GPU peak 6.93563461304 GiB,
+  sampled process RSS peak 4.5016 GiB; separate VAE load: 0.9083 s.
+- Denoise through readback: 51.7984 s; tracked total: 70.5770291 s.
+- Completed 20 native execution-plan passes; no monitor errors, native fault,
+  admission, pool or read failures, plan mismatches or temporary tensors.
+  Live source tickets and transfer-owned events were zero at collection.
+- PNG is byte-identical to outputs/qwen21_base_vmm_1024_20steps/image.png:
+  SHA256 1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45.
+
+This closes the selected base BF16 untiled VAE gate without image changes.
+Options remain explicit; Turbo, other resolutions and arbitrary models are not
+validated by this case. Historical original decode timings include VAE loading
+and use different monitoring/lifecycle controls: do not compare them as matched
+isolated decode speedups or attribute the entire total difference to the VAE.
+Direct padding remains rejected. No DDO, DLL or installed Diffusers changes.
+
+## Qwen-Image 2.1 direct convolution padding: rejected — 2026-10-11
+
+User ran outputs/qwen21_vae_padding_untiled_gate with the same base BF16
+1024x1024, two-step, seed-42 untiled workload as the accepted residual-reuse
+case below, adding only --vae-direct-padding. Executed controls confirm all
+three local options, no tiling, the preserved DLL, and successful standby purge.
+Run completed two steps. Decode was 1.1789 s, sampled absolute driver GPU peak
+6.20849609375 GiB, and sampled process RSS peak 4.5002 GiB; tracked total
+23.7383171 s. Prior accepted decode was 1.2658 s / 6.90600204468 GiB.
+
+Candidate PNG SHA256:
+6104F9E3F6C94424EFAB3F550952A319D628B0515CD68AD6BE254823AF08A1A0.
+Unlike the accepted reference B012FF78DEA49C4AD85E26C0F8906833EF8F2A3F0B0673CC4FB3593E93BB4209,
+decoded RGBA pixels differ: 140,735 changed pixels, 155,685 changed channels,
+maximum absolute 8-bit channel difference 13, mean difference 0.03920841217
+across all RGBA channels. Both images are 1024x1024. This is not merely PNG
+metadata variation. Perceptual degradation is not established, but the exact
+image-preservation gate failed: reject direct padding and leave it disabled.
+Keep the accepted temporal-cache removal and residual reuse unchanged.
+Single sequential timing/memory observations are not general performance claims.
+
+## Qwen-Image 2.1 untiled VAE residual input reuse — 2026-10-11
+
+User ran the same two-step 1024x1024 cacheless workload recorded below,
+additionally enabling --vae-alias-residuals. All other requested controls and
+executed DLL/weight/staging/source capacities matched. Standby purge succeeded;
+tiling remained disabled. The local blocks reuse immutable residual input and
+share child modules/parameters; FP32 normalizations and upsampling are unchanged.
+
+| Decode phase observation | Cacheless | Cacheless + residual reuse |
+| --- | ---: | ---: |
+| Wall time, s | 1.3127 | 1.2658 |
+| Sampled absolute driver GPU peak, GiB | 7.6955 | 6.9060 |
+| Sampled process RSS peak, GiB | 4.4999 | 4.5004 |
+
+Candidate completed, with no monitor/native failures, temporary fallback or
+live source tickets at collection. PNG SHA256 matches the protected untiled
+reference: B012FF78DEA49C4AD85E26C0F8906833EF8F2A3F0B0673CC4FB3593E93BB4209.
+Artifacts: outputs/qwen21_vae_alias_untiled_gate. This is selected workload
+acceptance, not general VAE support. The 0.0469 s timing difference is small
+and not a proven repeatable speedup. Direct convolution padding was not enabled;
+it is a separate pending CUDA candidate. No default, DDO or DLL was changed.
+
+## Qwen-Image 2.1 untiled VAE temporal-cache removal — 2026-10-11
+
+User ran base BF16 1024x1024, two steps, seed 42, the capybara prompt used
+below, CFG 1 and native KV cache. Both runs used staged VMM with leaf encoder,
+4 GiB weight budget, 0.625 GiB staging and 16 GiB source cache, RSS monitoring
+and a successfully executed before-transformer standby purge. Both explicitly
+disabled tiling. Diffusers source was the local fork; the recorded native DLL
+was build-joined-spans-cu128-20261006/Release/ddo_vmm.dll (preserved hash below).
+Only the second run enabled the local --vae-no-temporal-cache option.
+
+| Recorded phase observation | Original native VAE | Local cacheless VAE |
+| --- | ---: | ---: |
+| Decode wall time, s | 5.9766 | 1.3127 |
+| Decode sampled absolute driver GPU peak, GiB | 7.9995 | 7.6955 |
+| Decode sampled process RSS peak, GiB | 6.7512 | 4.4999 |
+| Tracked total, s | 29.6231 | 24.6114 |
+
+Both completed with no monitor/runtime failures or temporary native fallback;
+PNG files are byte-identical, SHA256
+B012FF78DEA49C4AD85E26C0F8906833EF8F2A3F0B0673CC4FB3593E93BB4209.
+Artifacts: outputs/qwen21_vae_native_untiled_gate and
+outputs/qwen21_vae_cacheless_untiled_gate. Decode timing includes native
+postprocessing/CPU image materialization, but not VAE load; sampled driver
+usage is not a tensor-allocation census. Single sequential observations:
+do not attribute every total-time difference to the cache change.
+The local override omits single-frame temporal feature retention; weights,
+normalization FP32, upsampling, clamp and postprocessing are unchanged.
+Residual aliasing is a later separate candidate, not enabled in this pair.
+
+## Qwen full-runner reporting/lifecycle revision — 2026-10-11
+
+The full linear, native VMM and conventional leaf runners now share RunTracker
+reporting through a small lifecycle helper. The staged runners explicitly drop
+conditioning/preparation/component references at phase boundaries, retain only
+the CPU latent for decode, and expose optional Windows standby purge. RSS is
+the new full-runner monitoring default; optional CUDA boundary timing does not
+synchronize every step. The conventional control remains full-pipeline, but
+its new callback observations are asynchronous. These differences are recorded
+as reporting revision 2; do not overwrite or reinterpret the older artifacts
+below. The minimal runner remains a separate didactic example.
+
+26 CPU contracts passed; CUDA revalidation of this runner revision is pending.
+No DDO/DLL/model-math change or new performance claim is part of this revision.
+See [Qwen runner guidance](../docs/qwen-image-21.md) for phase and metric scopes.
+
+## Qwen-Image 2.1 base BF16: native VAE tiling at 1024x1024 — 2026-10-11
+
+User repeated the native VMM 1024x1024/20-step/seed-42 workload below with
+only `--vae-tiling` added and a separate output directory. Same prompt,
+BF16 checkpoint, native forward, weight/staging/source ceilings and encoder
+leaf route. The runner calls the native `vae.enable_tiling()`; no custom
+decoder implementation or DDO/allocator change was made.
+
+| Recorded measurement | Without tiling | Native tiling |
+| --- | ---: | ---: |
+| Decode phase including load, s | 7.7426 | 4.9448 |
+| Sampled absolute driver GPU peak during decode, GiB | 7.9995 | 2.5815 |
+| Baseline-relative sampled GPU peak during decode, GiB | 6.9727 | 1.5547 |
+| Sampled process USS peak during decode, GiB | 6.7645 | 5.6412 |
+| Tracked total, s | 85.1288 | 84.2664 |
+| Denoise through CPU readback, s | 59.8853 | 58.0559 |
+
+Both GPU baselines were 1.026855469 GiB. Decode absolute peak fell by
+5.4180 GiB (67.73%); recorded decode phase was 36.14% shorter.
+Single sequential observations include loading and monitoring; do not
+attribute encoder/denoise variation or total-time changes to VAE tiling.
+The tiled run completed 20 steps; all monitor errors are null.
+Visual inspection found similar composition and no obvious tile seams at
+the inspected display scale, not a quantitative/perceptual parity guarantee.
+Tiled PNG differs as expected; SHA256:
+`22149AA6E2729026443605FA4D7EE4254F7492E1FE1F5FA5DF317F3D5D07CD18`.
+Artifacts: `outputs/qwen21_base_vmm_1024_20steps_tiling/image.png` and
+`metrics.json`. Native tiling is a useful selected-workload low-VRAM
+option; no runner defaults were changed.
+
+## Qwen-Image 2.1 base BF16: linear versus VMM at 1024x1024 — 2026-10-11
+
+User-run linear follow-up uses `run_dynamic_minimal.py`, `--ddo-preset auto`,
+the same base checkpoint/prompt, 1024x1024, 20 steps and seed 42 as the
+native VMM case below. Same root environment/process-scoped Diffusers source;
+no VAE tiling or new DDO/allocator change. Linear selected 4.875 GiB resident
+module weights and 8.3462 GiB pinned CPU weights. Text encoder remains leaf
+compatibility in both routes.
+
+| Recorded measurement | Linear modular | Native VMM modular |
+| --- | ---: | ---: |
+| Tracked total, s | 93.9298 | 85.1288 |
+| Encoder phase including load/cleanup, s | 13.2328 | 13.9221 |
+| Transformer phase including load/setup/cleanup, s | 69.5129 | 63.1961 |
+| Decode phase including load, s | 10.7350 | 7.7426 |
+| Sampled absolute driver GPU peak in transformer, GiB | 7.0983 | 6.3183 |
+| Sampled absolute driver GPU peak in decode, GiB | 7.9995 | 7.9995 |
+| Sampled process USS peak across phases, GiB | 20.8134 | 19.0192 |
+
+Both completed and produced byte-identical PNG files, SHA256
+`1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45`.
+Linear artifact: `outputs/qwen21_base_linear_1024_20steps/image.png` and
+`metrics.json`. VMM artifact is recorded below. All linear monitor errors
+are null. Linear has no separate denoise timing; do not derive its s/it by
+dividing the transformer phase by 20.
+
+VMM total was 8.8011 s (9.37%) lower and its transformer phase was 6.3168 s
+(9.09%) shorter. These single sequential observations combine runtime/setup,
+monitoring and system/cache-state differences, not an isolated steady-state
+speedup estimate. Full USS monitoring remained enabled. Both native decodes
+reached approximately the device's entire 8 GiB in sampled absolute driver
+usage; no increased-resolution or extra benchmark approval is implied.
+
+## Qwen-Image 2.1 base BF16: native VMM 1024x1024 — 2026-10-11
+
+User-run follow-up to the 512x512 comparison below. Same base checkpoint,
+prompt, seed 42, BF16, 20 steps, native model forward/KV cache, staged modular
+runner, source/environment and selected DLL. Only requested width/height and
+output directory changed. Weight-residency ceiling remains 4 GiB, total
+staging 0.625 GiB, native source cache 16 GiB. Encoder remains leaf compatibility.
+No VAE tiling or explicit standby purge was requested.
+
+| Recorded measurement | VMM 512x512 | VMM 1024x1024 |
+| --- | ---: | ---: |
+| Tracked total, s | 43.6096 | 85.1288 |
+| Encoder phase including load/cleanup, s | 10.9224 | 13.9221 |
+| Transformer phase including load/setup/cleanup, s | 30.2419 | 63.1961 |
+| Denoise through CPU latent readback, s | 26.5746 | 59.8853 |
+| Decode phase including load, s | 2.1508 | 7.7426 |
+| Sampled absolute driver GPU peak during transformer, GiB | 6.3578 | 6.3183 |
+| Sampled absolute driver GPU peak during decode, GiB | 3.7280 | 7.9995 |
+| Sampled process USS peak across phases, GiB | 19.0198 | 19.0192 |
+
+Generation completed with 20 native execution-plan passes. The collected
+transformer snapshot reports zero fault/guard/CUDA/capacity admission failures,
+execution-plan mismatches, temporary tensors, pool failures/quarantine,
+source-read failures and cache admission denials. Source-cache hits/misses
+remain 6,671/213; source-read bytes 14,230,284,408 and DMA bytes
+222,076,338,176 match the 512x512 case. These counters do not imply identical
+compute costs. Live tickets and transfer-owned events are zero at collection,
+not a post-exit allocation census. All phase monitor errors are null.
+
+Later asynchronous host callbacks were mostly 2.72-2.82 s (step 3: 2.3068 s);
+these are not CUDA-event step timings. The 59.8853 s denoise metric includes
+final CPU readback. No matched linear or conventional 1024x1024 run exists yet.
+
+Visual inspection found a coherent 1024x1024 image matching the prompt.
+Its SHA256 is
+`1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45`.
+Different resolution means no pixel-parity comparison to the 512x512 output.
+Artifact: `outputs/qwen21_base_vmm_1024_20steps/image.png` and `metrics.json`.
+Raw candidate labels remain unchanged.
+
+Selected workload functionality passes. The native VAE decode reached
+approximately the entire 8 GiB device in sampled absolute driver usage.
+This is a capacity warning, not an OOM or proof of shared-WDDM spill.
+Do not infer spare decode capacity or authorize higher resolution from this
+result. Native tiling could be evaluated separately if a safer decode route
+is needed; it is not enabled automatically. Full USS monitoring is retained;
+its query time is not subtracted from generation time.
+
+## Qwen-Image 2.1 base BF16: linear, official leaf and native VMM — 2026-10-11
+
+User-run Windows observations from the primary host root `.venv`.
+Workload: `Qwen/Qwen-Image-2.1`, BF16, text-to-image, 512x512, 20 steps,
+seed 42, one image, CFG scale 1, native KV cache enabled. Prompt:
+"A capybara wearing a wizard hat, reading by candlelight, oil painting".
+Linear was completed on October 10; leaf and VMM on October 11 (local time).
+
+The process-scoped source was `F:/Projetos/diffusers/src`; the conventional
+report confirms that import path. The last inspected source revision was
+`7d047b18092beebdb6d2aebadf1ccc254787dbc4`, not embedded in these reports.
+Model cache snapshot: `d26bb61231c349cf6b7896fa83353113880e1ba3`.
+The host dependency lock and accepted LTX paths were not changed.
+
+| Recorded measurement | DDO linear modular | Conventional Diffusers leaf | DDO native VMM modular |
+| --- | ---: | ---: | ---: |
+| Tracked total, s | 50.6873 | 379.3020 | 43.6096 |
+| Encoder phase including load/cleanup, s | 14.7564 | unavailable separately | 10.9224 |
+| Transformer phase including load/setup/cleanup, s | 30.9378 | unavailable separately | 30.2419 |
+| Decode phase including load, s | 4.6695 | unavailable separately | 2.1508 |
+| Load/setup, s | included in staged phases | 1.5702 | included in staged phases |
+| Conventional generation call, s | not applicable | 377.6377 | not applicable |
+| Denoise through CPU latent readback, s | unavailable | unavailable separately | 26.5746 |
+| Sampled absolute driver GPU peak, GiB | 6.5347 | 5.0874 | 6.3578 |
+| Sampled process USS peak, GiB | 21.5977 | 33.0219 | 19.0198 |
+
+Linear: `run_dynamic_minimal.py`, `auto/one_shot_fast`,
+`linear_runtime` transformer; about 4.875 GiB resident module weights and
+8.3462 GiB pinned CPU weights. Encoder used official leaf compatibility.
+
+Conventional: `run_diffusers_leaf.py`, unmodified `QwenImage21Pipeline`;
+official leaf on transformer and encoder, streams enabled, record_stream false,
+low_cpu_mem_usage true, initial non_blocking false. Native VAE on CUDA.
+No DDO runtime, custom blocks, allocator or forward patch. It retained the
+full pipeline components instead of releasing them phase by phase.
+Synchronized callback intervals for steps 2-20 averaged 18.2963 s;
+the 28.2732 s first interval also includes prompt encoding.
+
+VMM: `run_dynamic_modular_vmm.py`, `vmm/auto -> vmm_fast`,
+native transformer transport, 4 GiB weight-residency ceiling, 0.625 GiB total
+staging, 16 GiB source-cache ceiling; registration ceiling defaults to the
+storage ceiling. Encoder stayed on official leaf compatibility, not native
+Qwen encoder VMM. No VAE tiling or explicit standby purge was requested.
+The native binary recorded in the report resolves to
+`ddo-vmm-allocator/build-joined-spans-cu128-20261006/Release/ddo_vmm.dll`.
+Inspected SHA256:
+`EC5AB4700EE5D171CC06D8E9EC99C549F8D6CC3DFBE7FEB2683B93ADD0E829E6`.
+
+VMM host callback intervals for steps 3-20 averaged 0.96994 s
+(range 0.94583-0.99449); they are asynchronous wall observations, NOT isolated
+CUDA step measurements. Step 1 was 8.11413 s and step 2 only 0.09342 s:
+do not interpret those intervals as completed GPU step durations.
+The native snapshot records 20 execution-plan passes, 6,671 source-cache hits,
+213 misses, 14,230,284,408 source-read bytes, zero CPU-source bindings,
+zero fault/guard/CUDA/capacity admission failures, execution-plan mismatches,
+temporary fallback tensors, source-read failures, source-cache admission
+denials and allocator-pool failures/quarantine. Live source tickets and
+transfer-owned events are zero at collection; this is not a post-exit census.
+
+All three PNG files have identical SHA256:
+`550C28BB34648ABE520D59C5C5506CB55488F221E8CCFB6F22D8E13CCD1B6CF1`.
+Visual inspection found a coherent image matching the prompt. This establishes
+selected-case output equivalence, not arbitrary-prompt/model support.
+Raw static candidate validation labels are preserved unchanged.
+
+The VMM tracked total was 13.96% lower than linear, but its transformer phase
+was only 2.25% shorter. Most of the total difference came from encoder/decode
+phases; do not attribute the full total improvement to native offloading.
+The conventional total was about 7.48x the linear total and 8.70x VMM, but these
+single sequential, differently orchestrated runs are not an allocator-only
+or instrumentation-neutral speedup benchmark. Full USS monitoring was used
+in all cases; conventional generation accumulated 326.5688 s in RAM queries
+in the monitor thread. Those queries may affect execution and cannot simply
+be subtracted from wall time. Normalize monitoring and timing scope before
+making a causal performance claim; no extra benchmark is automatically required.
+
+Artifacts (each directory contains `image.png` and `metrics.json`):
+- `outputs/qwen21_base_minimal_20steps`
+- `outputs/qwen21_base_diffusers_leaf_20steps`
+- `outputs/qwen21_base_vmm_20steps`
+
+The first offline VMM attempt failed while resolving the processor, before
+transformer setup. Runners now resolve the cached processor component directory
+explicitly; offline CPU loading passed before the successful generation.
+DDO and allocator code were not modified for Qwen.
+
 ## User-run merged-source LTX BF16 closure — 2026-10-10
 
 Root host .venv, PYTHONPATH=F:/Projetos/diffusers/src, HF_HOME=F:/hf_cache.
@@ -3494,3 +3977,578 @@ and ltx23_modular_1280x704_5.0s_seed43.mp4. User-pasted source reports were
 39d34940-d442-4482-aa26-de3c7c13bd46 and
 a9babd70-e81b-417e-95aa-7e48457ce9e7. No new CUDA execution or source change
 was performed while recording these results.
+
+## Qwen Image 2.1 native VAE: exact output, higher memory than leaf
+
+User-run artifact: `outputs/qwen21_vae_native_vmm_20steps/metrics.json` and
+`image.png`; compare with `outputs/qwen21_vae_leaf_trim_enabled`. Both completed
+base BF16 1024x1024, 20 steps, seed 42, CFG 1, native KV cache, prompt
+`A capybara wearing a wizard hat, reading by candlelight, oil painting`.
+Untiled local single-frame decode and residual aliasing enabled; direct padding
+disabled. Native transformer ceiling 4 GiB, staging 0.625 GiB, source cache
+16 GiB. Successful standby purge before transformer and simple native idle trim
+before VAE; no cuBLAS workspace clear. Same idle-trim candidate DLL SHA256
+`468A854EB550C6299C3DE785B65ECD4F4DF382C488B6F1C83AA6899983F12CFE`.
+
+| Measurement | Official leaf VAE + trim | Native VMM VAE + trim |
+| --- | ---: | ---: |
+| Total pipeline, s | 72.5433 | 70.6738 |
+| Denoise through CPU readback, s | 52.8167 | 51.9337 |
+| VAE load, s | 0.8469 | 0.0540 |
+| Separate native VAE attach, s | N/A (leaf hooks included in load) | 0.1220 |
+| VAE decode, s | 1.8943 | 1.4262 |
+| Decode absolute sampled driver GPU peak, GiB | 3.92724609375 | 5.94677734375 |
+| Decode sampled RSS peak, GiB | 4.5544 | 5.0889 |
+
+GPU peaks are absolute driver usage, not baseline-relative deltas; sampled at
+0.1-second intervals with RSS monitoring and no monitor errors. New run's
+baseline was 1.02685546875 GiB. Its 6.12060546875 GiB global absolute peak was
+during denoise, not decode. The legacy top-level `global_peak_vram_gb` is a
+baseline-relative delta and must not replace the absolute values above.
+
+The native VAE loaded a separately saved BF16 component at
+`F:/models/qwen-image-21-vae-bf16`, rather than casting original FP32 weights
+during load. Conversion verified all 238 tensors against that same source cast
+and preserved the original. Saved weight SHA256:
+`38fab976bd9bcd73fa0982736a2fb4f2549d1aee6a4a65b026f34fbc19d71f7b`.
+This saved-source preparation affects load time; the comparison is not a pure
+allocator-only setup A/B. Native VAE weight ceiling was explicitly 0.375 GiB,
+separate from the transformer; two page-aligned execution slots occupied 332 MiB.
+Twelve buffer uploads transferred 518,096,424 parameter bytes; arena residency
+was zero. All 238 bindings were file-backed, with zero CPU source bindings,
+fault/admission failures, temporary fallback, pool/source-read failures, live
+source tickets or transfer-owned events. Two remaining completion tickets were
+collected before normal cleanup. No real-VAE cancellation test was performed.
+
+Both PNGs have the accepted 20-step SHA256
+`1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45`.
+Functionality and exact image equality passed. **The memory-reduction objective
+failed:** native decode saved 0.4681 s but its sampled GPU peak was 2.01953125 GiB
+higher (about 51.4%). Keep official leaf + trim as the selected capacity route;
+native VAE remains experimental, not a replacement default. Slot residency
+does not explain the entire difference; these reports do not isolate pool,
+activation or workspace causality. Sequential timing variation is not proof
+of a transformer speedup or a systematic end-to-end advantage. No additional
+CUDA execution or parameter tuning was performed while recording this result.
+
+### Qwen VAE linear versus leaf, normal allocator (2026-10-11)
+
+User-executed full modular base BF16 pair: 1024 x 1024, seed 42, 20 steps,
+CFG 1, native KV cache, prompt `A capybara wearing a wizard hat, reading by
+candlelight, oil painting`, transformer preset one_shot_fast. Both used accepted
+single-frame cacheless/residual-alias VAE options, no tiling or direct padding,
+and successful Windows standby purge before the transformer. This pair used
+the normal PyTorch allocator, not native VMM.
+
+| VAE route | Total wall s | Denoise through CPU readback s | Decode s | Sampled absolute decode GPU GiB | Decode process RSS GiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Official leaf, no stream | 77.6654 | 53.7452 | 1.5958 | 6.469936 | 14.5509 |
+| DDO linear convolution | 77.3947 | 54.2367 | 1.3642 | 6.503990 | 14.8634 |
+
+Artifacts: `outputs/qwen21_linear_vae_leaf/metrics.json` and
+`outputs/qwen21_linear_vae_linear/metrics.json`, with image.png in each directory.
+Both reports have status completed, 20 executed steps and successful save/cleanup
+phases. Both PNGs match the accepted SHA256
+`1FF1ECA154725130C6205ADF273CE069CD192BA8F8F385C07FEA792FF7753B45`.
+Linear decode was 0.2316 s shorter (14.5%) in this pair, with no demonstrated
+capacity improvement: the sampled peak was 0.034054 GiB higher. Sampling interval
+was 100 ms. This single sequential pair is not proof of a repeatable pipeline
+speedup; no additional runs were made during analysis.
+
+Do not directly rank these absolute memory numbers against the native-transformer
+leaf+trim/native-VAE pair above: process allocator and preceding component routes
+differ. Keep native transformer plus leaf and explicit idle trim as the selected
+capacity combination. Linear and native VMM VAE are compatible for this selected
+checkpoint, not every VAE. DDO now owns VAE preset routing and the host delegates
+the selection; this subsequent policy migration has CPU tests only, not new
+performance acceptance. Historical artifacts were not rewritten.
+
+## 2026-10-11: LTX image/video VAE resident versus no-stream leaf
+
+Selected Windows user-run gates in the primary host root uv environment,
+with the local Diffusers fork and independent local custom-block clones.
+Only the VAE decode route and output directory change within each pair;
+conditioning encode, transformer math/budgets, checkpoint dtype and audio
+routes are unchanged. Leaf uses DDO's public API and official Diffusers
+leaf-level group offload, use_stream=false, low_cpu_mem_usage=false.
+This is not native VMM VAE execution or DDO linear convolution offload.
+
+Both workloads use BF16, 1280x704, seed 43, eight steps and native text
+encoding. Image uses the real default prompt, no PAG, a 4 GiB transformer
+ceiling and 1.5 GiB total staging. Video uses five seconds at 24 fps
+(121 frames), the existing guitar image/prompt, no conditioning audio,
+generated output audio, the 1.5 GiB transformer ceiling, 4 GiB encoder
+ceiling, 1.5 GiB staging, chunk sizes 1024, phase modulation, compact
+timesteps and in-place residuals. Source/cache registration limits are
+24.625 GiB. Video retains the existing temporal streaming decode, spatial
+tiling setting, blend geometry and CPU stitching; image adds no tiling.
+Successful Windows standby purge before the transformer is recorded in
+all four artifacts, and its cost remains in tracked totals.
+
+Selected DLL: build-joined-spans-cu128-20261006/Release/ddo_vmm.dll,
+SHA256 EC5AB4700EE5D171CC06D8E9EC99C549F8D6CC3DFBE7FEB2683B93ADD0E829E6.
+These gates do not validate another binary or platform. The VAE/telemetry
+candidate was an uncommitted working-tree change; no immutable candidate
+revision is claimed. Missing installed inventory fields remain unavailable.
+
+### Image phases
+
+| Phase | Resident time (s) | Leaf time (s) | Resident VRAM (GiB) | Leaf VRAM (GiB) | Resident RSS (GiB) | Leaf RSS (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Pass 0: Encode prompts | 14.29 | 14.65 | 6.79 | 6.81 | 25.12 | 25.12 |
+| Pass 1: Generate at 1280x704 | 21.72 | 22.28 | 7.15 | 7.17 | 27.37 | 27.37 |
+| Load VAE for decode | 1.03 | 0.06 | 2.88 | 1.68 | 2.86 | 1.61 |
+| Decode VAE | 0.33 | 1.12 | 3.19 | 2.23 | 1.65 | 3.17 |
+| Cleanup VAE | 0.14 | 0.16 | 3.19 | 2.03 | 1.66 | 3.19 |
+| Save Image | 0.07 | 0.07 | 2.07 | 2.03 | 1.66 | 2.43 |
+
+Tracked total: 39.18 s resident / 40.34 s leaf.
+Global sampled absolute GPU peak: 7.15 / 7.17 GiB;
+global process RSS: 27.37 / 27.37 GiB.
+Load+decode+cleanup aggregate: 1.4978 / 1.3483 s. The decode-only
+phase shifts upload cost into leaf execution and must not be used alone
+as an end-to-end comparison. The total-time difference includes earlier
+phases and is not attributable entirely to the VAE.
+
+Both saved PNGs match the historical image SHA256:
+877876A4A8E1143A59E51A737EF3EB7F05A27980A6A44D20FED80D2AB581CCED.
+
+### Video phases
+
+| Phase | Resident time (s) | Leaf time (s) | Resident VRAM (GiB) | Leaf VRAM (GiB) | Resident RSS (GiB) | Leaf RSS (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| text_encoder | 12.08 | 12.15 | 5.14 | 4.96 | 25.29 | 25.29 |
+| connectors | 6.50 | 6.47 | 2.82 | 2.82 | 11.31 | 11.36 |
+| video_encoder | 3.85 | 3.21 | 1.45 | 1.45 | 8.09 | 8.09 |
+| audio_encoder | 0.15 | 0.14 | 1.45 | 1.45 | 6.73 | 6.73 |
+| load_and_prepare_transformer | 1.81 | 1.99 | 1.71 | 1.71 | 6.88 | 6.88 |
+| attach_transformer | 6.23 | 6.66 | 1.72 | 1.72 | 3.75 | 3.75 |
+| denoise | 198.58 | 199.30 | 4.57 | 4.57 | 28.42 | 28.42 |
+| load_decode_video | 0.96 | 0.06 | 2.41 | 1.52 | 3.57 | 2.27 |
+| decode_video | 22.66 | 32.88 | 4.81 | 3.02 | 7.16 | 9.27 |
+| cleanup_decode_video | 0.25 | 0.29 | 2.89 | 1.57 | 5.89 | 7.88 |
+| load_decode_audio_mel | 0.14 | 0.17 | 1.54 | 1.57 | 5.95 | 7.10 |
+| decode_audio_mel | 0.07 | 0.06 | 1.54 | 1.57 | 5.89 | 7.06 |
+| cleanup_decode_audio_mel | 0.28 | 0.22 | 1.54 | 1.57 | 5.90 | 7.08 |
+| load_decode_audio | 0.47 | 0.50 | 1.54 | 1.57 | 6.14 | 7.29 |
+| decode_audio | 0.48 | 0.48 | 1.54 | 1.57 | 6.02 | 7.18 |
+| cleanup_decode_audio | 0.24 | 0.24 | 1.54 | 1.57 | 6.02 | 7.19 |
+| save_video | 1.34 | 1.33 | 1.54 | 1.57 | 6.83 | 7.99 |
+
+Tracked total: 261.67 s resident / 271.83 s leaf.
+Global sampled absolute GPU peak: 5.14 / 4.96 GiB;
+global process RSS: 28.42 / 28.42 GiB.
+Decode+save aggregate (including video/audio load and cleanup):
+26.9105 / 36.2375 s. Both reports completed with 121 frames at
+1280x704 and finite two-channel audio, shape [2, 240480], 48000 Hz.
+Both saved MP4s match the historical video SHA256:
+56BD4CF1D6F20CD2C978FDA6280902197A24FC179E303AC98F65EE02EB7FD891.
+This confirms identical delivered media, not a perceptual score or a
+separate capture of pre-encoding tensors.
+
+### Interpretation and artifacts
+
+Leaf lowers the VAE decode GPU peak by approximately 0.96 GiB for image
+and 1.79 GiB for video. Decode RSS rises by approximately 1.52 and 2.11 GiB.
+Video decode is 10.22 s longer; retain resident as the existing default,
+with leaf as an explicit VAE capacity option. Global peaks are dominated
+by earlier components and must not be advertised as the VAE savings.
+These are single sequential observations, not statistically established
+speedups or low-system-RAM acceptance.
+
+Image artifacts: outputs/ltx_image_vae_resident_gate and
+outputs/ltx_image_vae_leaf_gate (PNG plus metrics/<run_slug>.json).
+Video artifacts: outputs/ltx_video_vae_resident_gate and
+outputs/ltx_video_vae_leaf_gate (MP4 plus metrics/modular_run.json).
+Phase memory is sampled absolute CUDA driver usage and process RSS,
+in GiB, at 100 ms intervals; it is not total system commit or shared WDDM
+occupancy. New load/decode/cleanup/save phases are separate; legacy combined
+decode names are aggregate events, not extra phases to sum. Historical
+JSON is preserved unchanged. Denoise phase averages are not CUDA steady-state.
+See docs/benchmark-summary.md for VAE-only hardware recommendations.
+
+## 2026-10-11: native Linux LTX image resident VAE control
+
+The approved single control completed with exit 0, image and metrics saved.
+Leaf/video comparisons remain pending. Primary host `.venv-linux`, Python
+3.12.14, Torch 2.12.1+cu132, local editable Diffusers 0.41.0.dev0 at revision
+7d047b180, local DDO/allocator and independent local image blocks. Ubuntu 26.04.1,
+RTX 3060 Ti 8192 MiB. Candidate build-linux-idle-trim-20261011/libddo_vmm.so,
+SHA256 db63138da2fdcca328a244ff885ca44ecd8b33683825b2ab0f6f39a95b3cba79.
+Span pool ON; joined spans/probes/dispatcher/test hooks/diagnostics/independent
+kernels OFF. Uncommitted source candidate; no immutable revision or promotion.
+
+Preflight GPU 463 MiB used/7377 MiB free; MemAvailable 58,719,080 kB,
+CommitLimit 40,090,756 kB, Committed_AS 15,131,200 kB; overcommit mode 0.
+No kernel policy or capacity adjustment. Output directory absent before the run.
+BF16, real default prompt, 1280x704, seed 43, eight steps, one generation, no PAG.
+Native encoder then native transformer, resident VAE; active ceiling 4 GiB,
+total staging 1.5 GiB, source/registration ceilings 24.625 GiB. No automatic trim,
+cuBLAS clear, added tiling or Linux standby purge. VAE executed route none/resident.
+Checkpoint: /run/media/eliseu/IA/hf_cache/hub/models--elismasilva--ltx2.3-image-distilled-1.1/snapshots/5cd2f057b18d3964f7dc1ce9ab061e9dd22754b9.
+The selected Windows image recipe was retained with Linux interpreter, library,
+cache paths and this explicit Linux snapshot. No workload tuning occurred.
+
+| Phase | Time (s) | Sampled absolute GPU peak (GiB) | Process RSS peak (GiB) |
+| --- | ---: | ---: | ---: |
+| Prompt encoding | 15.6269 | 6.259766 | 25.1432 |
+| Generate including connectors/transformer setup | 23.2872 | 6.559631 | 27.3297 |
+| VAE load | 0.6600 | 2.435242 | 2.8960 |
+| VAE decode | 0.3418 | 2.758850 | 1.6525 |
+| VAE cleanup | 0.1675 | 2.758850 | 1.6843 |
+| Image save | 0.2106 | 1.643616 | 1.6595 |
+
+Tracked total 40.2959 s excludes bootstrap/import startup. Global absolute GPU
+peak 6.559631 GiB, RSS 27.3297 GiB. Combined VAE event 1.1702 s is an aggregate,
+not an additional phase. Denoise modular-call wall time 17.1203 s; wall phase
+average 2.1400 s/step includes first-step warmup. Completed CUDA compute-stream
+phase with dependencies 17.399541 s; first interval 10.006696 s; CUDA mean steps
+2-8 1.056121 s/step. All eight intervals complete, timing.failed=false.
+Host callbacks are not completed CUDA intervals.
+
+No reported native failures, temporary fallbacks, quarantine, admission denials,
+source-cache bypasses or monitor errors. Encoder source committed/registered
+23,555,211,264 bytes; transformer 26,038,239,232 bytes, within fixed ceilings.
+Transformer completion collection retired 411 tickets to zero. Final recorded
+source committed/registered bytes and live tickets are zero. This is one selected
+staged workload, not arbitrary-model or driver-loss acceptance.
+
+Saved PNG: 1280x704, visually plausible; SHA256
+dfbf135a833b5a77f4574a98cebd3be84d19fc569b79de8dd5f18457c52d64c1.
+It differs from Windows; no cross-platform pixel equality is inferred. Use this
+Linux image as the resident control for the pending leaf comparison.
+Artifacts: outputs/ltx_image_vae_resident_linux_gate, PNG plus metrics/<run_slug>.json.
+Raw console: .internal/logs/ltx_image_vae_resident_linux_gate.log, local/ignored.
+GPU/RSS peaks are sampled, not instantaneous enforced caps, system commitment,
+WDDM/shared usage or model residency. Raw artifacts remain unchanged.
+
+## 2026-10-11: native Linux LTX image VAE pair closed
+
+The approved leaf run completed with exit 0, retaining the resident control's
+exact command, checkpoint, native binary, budgets and model settings. Only
+`--vae-leaf-offload` and the output directory changed. Preflight: GPU 460 MiB
+used/7380 MiB free, MemAvailable 58,773,140 kB; candidate hash unchanged.
+Leaf executed official Diffusers leaf-level group offload through DDO,
+use_stream=false and low_cpu_mem_usage=false, not native VMM VAE transport.
+
+| Phase | Resident (s) | Leaf (s) | Resident absolute GPU (GiB) | Leaf absolute GPU (GiB) | Resident RSS (GiB) | Leaf RSS (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Prompt encoding | 15.6269 | 14.9689 | 6.259766 | 6.234192 | 25.1432 | 25.1297 |
+| Generate including setup | 23.2872 | 21.5114 | 6.559631 | 6.534973 | 27.3297 | 27.3595 |
+| VAE load | 0.6600 | 0.0206 | 2.435242 | 1.269348 | 2.8960 | 1.5980 |
+| VAE decode | 0.3418 | 0.7482 | 2.758850 | 1.821838 | 1.6525 | 3.1866 |
+| VAE cleanup | 0.1675 | 0.2049 | 2.758850 | 1.596924 | 1.6843 | 3.2335 |
+| Image save | 0.2106 | 0.1980 | 1.643616 | 1.596924 | 1.6595 | 1.6871 |
+
+Tracked total 40.2959 / 37.6539 s (resident/leaf); global sampled absolute
+GPU 6.559631 / 6.534973 GiB, RSS 27.3297 / 27.3595 GiB. Denoise modular-call
+wall time 17.1203 / 17.0253 s; wall phase average 2.1400 / 2.1282 s/step,
+including first-step warmup. Completed CUDA phase with dependencies
+17.399541 / 17.303381 s; CUDA mean steps 2-8 1.056121 / 1.056260 s/step.
+Both have all eight completed CUDA intervals and timing.failed=false.
+Host callback intervals are not steady-state CUDA measurements.
+
+Leaf VAE combined load/decode/cleanup aggregate is 0.9746 s versus resident
+1.1702 s. GPU decode peak falls by 0.937012 GiB; decode RSS rises by 1.5341 GiB.
+Leaf uploads occur during decode rather than initial GPU loading. Earlier
+prompt/setup phases also differ, so the 2.6420 s shorter pipeline total is not
+an allocator-only or VAE-only speedup. These are single sequential observations;
+residency defaults remain unchanged, with leaf an explicit capacity alternative.
+
+Both PNGs have the exact same SHA256:
+dfbf135a833b5a77f4574a98cebd3be84d19fc569b79de8dd5f18457c52d64c1.
+No reported native failures, temporary fallbacks, quarantine, admission denials,
+source-cache bypasses or monitor errors. Local delivered-image parity and the
+selected native encoder/transformer plus leaf VAE route pass. This does not
+establish pixel equality across Windows/Linux, video acceptance or WSL support.
+
+Artifacts: outputs/ltx_image_vae_resident_linux_gate and
+outputs/ltx_image_vae_leaf_linux_gate, each with PNG and metrics/<run_slug>.json.
+Raw leaf console: .internal/logs/ltx_image_vae_leaf_linux_gate.log, local/ignored.
+No idle trim or cuBLAS clear was enabled in either image workload. Measurements
+retain sampled driver GPU/RSS scope and fixed 100 ms sampling; global peaks
+remain dominated by earlier components, not the VAE. Video comparison is pending.
+
+## 2026-10-11: native Linux LTX video VAE pair closed
+
+Both approved five-second/eight-step runs completed, exit 0, with 121 frames
+at 1280x704 and finite two-channel generated audio, shape [2, 240480], 48000 Hz.
+PyAV independently decoded all 121 encoded frames and confirmed 24 fps,
+1280x704, stereo 48000 Hz. Both delivered MP4 SHA256 values are identical:
+2c0c9491b0394ec3ee472a45b69cbf03f5afecd8ded3bca5b8ae509d56d270ef.
+This is within-Linux output parity, not cross-platform byte equality or a
+perceptual score; Windows delivers a different encoded hash.
+
+The primary host environment and isolated candidate are the same as the image
+pair above: Torch 2.12.1+cu132, local merged Diffusers 7d047b180, local editable
+DDO/allocator, Linux span pool ON with joined spans/probes/dispatcher/test hooks/
+diagnostics/independent kernels OFF. Candidate SHA256
+ db63138da2fdcca328a244ff885ca44ecd8b33683825b2ab0f6f39a95b3cba79.
+The source working tree remains uncommitted; no immutable revision/promotion.
+
+Checkpoint: OzzyGT/LTX-2.3-Distilled-1.1, local cache snapshot
+f070fb11c2af41e90ad9012d1f495b5131753a4d. BF16, default guitar prompt, local
+conditioning image .internal/inputs/man_guitar.png (1280x704 RGBA), SHA256
+213964e961f05ee39a9a21ac07ec93f146e73ab135b79cda57f773928a81db90.
+This was retrieved from the same public image URL used on Windows; its Windows
+input hash was not recorded, so exact cross-platform input identity is not proven.
+Five seconds, 24 fps, seed 43, eight steps, no input audio, generated audio.
+Native encoder ceiling 4 GiB; transformer/staging ceilings 1.5 GiB each;
+source and registration 24.625 GiB. Preserve chunk sizes 1024, phase modulation,
+compact timesteps, in-place residuals, host cache release and temporal streaming.
+No automatic idle trim/cuBLAS clear, budget change, new compute kernel or Linux
+standby purge. Only --vae-leaf-offload and output directory differ within the pair.
+Leaf is official no-stream Diffusers leaf via DDO, low_cpu_mem_usage=false;
+audio VAE/vocoder and conditioning encode routes remain unchanged.
+
+Preflight: resident GPU 449 MiB used/7391 MiB free, MemAvailable 58,683,288 kB,
+CommitLimit 40,090,756 kB, Committed_AS 15,354,740 kB, overcommit mode 0.
+Leaf GPU 460 MiB used/7380 MiB free, MemAvailable 58,752,948 kB. Output directories
+were absent. No kernel policy adjustment, failed-gate retry or new case was added.
+
+| Phase | Resident (s) | Leaf (s) | Resident GPU (GiB) | Leaf GPU (GiB) | Resident RSS (GiB) | Leaf RSS (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| text_encoder | 14.7144 | 14.6544 | 4.777649 | 4.787964 | 25.2879 | 25.2893 |
+| connectors | 5.4066 | 4.6470 | 2.429382 | 2.426880 | 11.0601 | 11.1483 |
+| video_encoder | 1.8310 | 1.6078 | 1.038818 | 1.036255 | 7.7762 | 7.7701 |
+| audio_encoder | 0.1606 | 0.1302 | 1.039001 | 1.036255 | 6.4272 | 6.4202 |
+| load_and_prepare_transformer | 2.5370 | 2.0084 | 1.468689 | 1.465942 | 6.8975 | 6.8915 |
+| attach_transformer | 1.5457 | 1.5644 | 1.220642 | 1.219849 | 3.7563 | 3.7504 |
+| denoise | 209.7483 | 209.5043 | 4.141418 | 4.138306 | 28.4240 | 28.4177 |
+| load_decode_video | 0.2335 | 0.0212 | 2.027344 | 1.108826 | 2.5040 | 1.8548 |
+| decode_video | 24.3894 | 32.5026 | 4.871399 | 2.589294 | 6.2289 | 7.5149 |
+| cleanup_decode_video | 0.2587 | 0.2959 | 2.470703 | 1.130737 | 2.2552 | 3.8219 |
+| load_decode_audio_mel | 0.0888 | 0.0296 | 1.113281 | 1.130737 | 2.2552 | 2.5335 |
+| decode_audio_mel | 0.0466 | 0.0287 | 1.113281 | 1.130737 | 2.2552 | 2.5335 |
+| cleanup_decode_audio_mel | 0.2320 | 0.2296 | 1.113342 | 1.130737 | 2.2608 | 2.5375 |
+| load_decode_audio | 0.3003 | 0.1737 | 1.113342 | 1.130615 | 2.3941 | 2.5477 |
+| decode_audio | 0.4537 | 0.3903 | 1.164429 | 1.132568 | 2.3780 | 2.5830 |
+| cleanup_decode_audio | 0.2568 | 0.2586 | 1.164429 | 1.156006 | 2.3791 | 2.5830 |
+| save_video | 1.2484 | 1.1073 | 1.154297 | 1.145935 | 3.1913 | 3.2174 |
+
+| Aggregate scope | Resident | Leaf |
+| --- | ---: | ---: |
+| Denoise wall (s) | 209.7483 | 209.5043 |
+| Wall phase average per step (s, includes warmup) | 26.2185 | 26.1880 |
+| Decode/save aggregate (s) | 27.5134 | 35.0427 |
+| Tracked total (s) | 266.5132 | 272.2485 |
+| Global sampled absolute GPU peak (GiB) | 4.871399 | 4.787964 |
+| Global RSS peak (GiB) | 28.423954 | 28.417744 |
+
+Leaf decode saves 2.282104 GiB of sampled absolute GPU usage, with 8.1132 s
+additional decode time and 1.2860 GiB more decode RSS. Native denoise differs by
+only 0.2440 s between these single observations; no denoise optimization is
+attributed to the VAE. Keep resident default, with leaf as a capacity alternative.
+Global memory is not the VAE-specific savings. All reported native failure/
+admission/quarantine/fallback and monitor-error observations are zero/absent.
+This closes selected Linux image/video VAE compatibility, not arbitrary models,
+FP8/SDNQ, VAE linear/native variants, WSL or driver-loss support.
+
+No synchronized per-step CUDA timing was requested in this video benchmark:
+wall averages include warmup and are not completed CUDA steady-state intervals.
+Driver GPU/RSS peaks are sampled at 100 ms, not enforced instantaneous caps or
+system commitment. Decode/save events are aggregates, not phases to double-count.
+The streaming helper disables VAE use_tiling/use_framewise_decoding during each
+window and restores them afterward; temporal streaming is not spatial tiling.
+No new spatial-tiling fallback was tested in this gate.
+
+Artifacts: outputs/ltx_video_vae_{resident,leaf}_linux_gate, MP4 plus
+metrics/modular_run.json. Raw console: .internal/logs/ltx_video_vae_{resident,leaf}_linux_gate.log,
+local/ignored. The prior Linux .so and all raw artifacts remain unchanged.
+
+## 2026-10-11: Qwen Image 2.1 Linux shared 512-square trio
+
+The approved three-run sequence completed with exit 0 and 20 executed steps in
+all reports. Base Qwen/Qwen-Image-2.1 BF16, 512x512, seed 42, default capybara
+prompt, CFG 1, native KV cache and stock resident AutoencoderKLQwenImage21 VAE.
+No tiling, cacheless VAE, residual aliasing, direct padding, idle trim, cuBLAS
+clear, compute compilation, Turbo, FP8 or SDNQ. Exact delivered PNG SHA256 in
+all three cases: f53ebe128845d491a98a02b56e693d1b993fecf6f2777239df84d920612eb11f.
+The inspected control image has the expected size and plausible content; no
+perceptual score is claimed. Historical Windows 1024 cases are separate workloads.
+
+Native Linux primary host .venv-linux, Python 3.12.14, Torch 2.12.1+cu132, local
+merged Diffusers 7d047b180 / 0.41.0.dev0, local editable DDO/allocator and local
+Qwen blocks. Local checkpoint snapshot d26bb61231c349cf6b7896fa83353113880e1ba3.
+VMM uses the isolated candidate SHA256
+ db63138da2fdcca328a244ff885ca44ecd8b33683825b2ab0f6f39a95b3cba79,
+span pool ON / joined spans OFF. Code is a local working tree, not an immutable
+published checkpoint. Conventional and linear runs use normal PyTorch allocation.
+
+The conventional control retains its full pipeline and applies official streamed
+leaf to encoder/transformer: use_stream=true, record_stream=false,
+low_cpu_mem_usage=true, non_blocking=false; VAE resident. DDO runs are phase-staged
+and release encoder/pipeline references before transformer execution. Linear
+auto resolves one_shot_fast; observed auto plan resident 4.66 GiB and pinned
+weight budget 11.24 GiB. Native active/staging/source/registration ceilings are
+4/0.625/16/16 GiB; no budget adjustment or failed-case retry occurred. The native
+encoder route is explicit Diffusers compatibility, not native encoder ownership.
+
+Preflight: GPU 461 MiB used/7379 MiB free, MemAvailable 58,376,832 kB,
+CommitLimit 40,090,756 kB, Committed_AS 15,457,584 kB, overcommit mode 0. Output
+directories absent. GPU used 459 MiB/free 7381 MiB before VMM. No kernel policy
+or standby purge on Linux. 27 Qwen/block/local-VAE CPU contracts passed first.
+
+| Linux route | Denoise/readback (s) | Phase average (s/step) | Tracked total (s) | Global GPU (GiB) | Global RSS (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Official streamed leaf (full pipeline) | N/A | N/A | 45.3132 | 4.800171 | 32.598476 |
+| DDO linear auto (staged) | 18.1429 | 0.9071 | 34.7060 | 5.580688 | 18.897018 |
+| DDO VMM fast (staged) | 15.6808 | 0.7840 | 23.2622 | 5.719055 | 18.867943 |
+
+Conventional generate phase 42.8842 s includes encoding, denoise and decoding;
+its isolated denoise/VAE times are unavailable, not zero. The other two denoise
+values include CPU latent readback and first-step warmup. No --ddo-gpu-timing was
+requested; synchronized CUDA warm means are N/A. Console callbacks remain
+asynchronous host observations and are not CUDA steady-state measurements.
+
+Native total is 48.7% lower than this conventional control and
+33.0% lower than linear in these single sequential observations. These are
+system/lifecycle-inclusive comparisons, not allocator-only gains. Native setup
+is shorter than linear pin/residency preparation; staged encoder cleanup also
+explains why conventional retained-pipeline RSS is not a pure allocator metric.
+Native GPU peak is 0.92 GiB higher than the conventional control;
+process RSS is 13.73 GiB lower. Do not extrapolate to a low-RAM host.
+
+
+### leaf phase observations
+
+| Phase | Wall (s) | Sampled absolute GPU (GiB) | RSS (GiB) |
+| --- | ---: | ---: | ---: |
+| load_pipeline | 1.2388 | 0.592896 | 2.5912 |
+| attach_leaf | 0.0957 | 0.601013 | 1.6282 |
+| generate | 42.8842 | 4.800110 | 32.5842 |
+| cleanup_pipeline | 0.9828 | 4.800171 | 32.5985 |
+| save_image | 0.1100 | 0.669312 | 4.0103 |
+
+### linear phase observations
+
+| Phase | Wall (s) | Sampled absolute GPU (GiB) | RSS (GiB) |
+| --- | ---: | ---: | ---: |
+| metadata | 0.0085 | 0.592590 | 0.8509 |
+| load_text_encoder | 0.7228 | 0.592590 | 0.9729 |
+| attach_text_encoder | 0.0225 | 0.592224 | 1.0043 |
+| encode | 3.3761 | 1.854065 | 18.7393 |
+| cleanup_text_encoder | 0.5763 | 1.854126 | 18.8970 |
+| purge_before_transformer | 0.0002 | 0.670532 | 3.5644 |
+| load_transformer | 0.0333 | 0.670532 | 3.5644 |
+| attach_transformer | 9.3609 | 5.188049 | 16.6348 |
+| prepare | 0.1612 | 5.188049 | 9.3809 |
+| denoise | 18.1430 | 5.580688 | 9.5071 |
+| collect_transformer | 0.0073 | 5.580688 | 9.5077 |
+| cleanup_transformer | 1.3487 | 5.580688 | 9.7076 |
+| load_vae | 0.2328 | 1.012146 | 11.1273 |
+| decode | 0.3825 | 3.135315 | 10.3877 |
+| collect_vae | 0.0001 | 3.275940 | 10.3908 |
+| cleanup_vae | 0.1851 | 3.275940 | 10.3908 |
+| save_image | 0.1341 | 0.689819 | 9.9694 |
+
+### vmm phase observations
+
+| Phase | Wall (s) | Sampled absolute GPU (GiB) | RSS (GiB) |
+| --- | ---: | ---: | ---: |
+| metadata | 0.0087 | 0.585571 | 0.8221 |
+| load_text_encoder | 0.6308 | 0.585571 | 0.9665 |
+| attach_text_encoder | 0.0228 | 0.582397 | 0.9749 |
+| encode | 3.4170 | 1.808899 | 18.8489 |
+| cleanup_text_encoder | 0.5660 | 1.803589 | 18.8679 |
+| purge_before_transformer | 0.0002 | 1.803589 | 3.5312 |
+| load_transformer | 0.0562 | 1.803589 | 3.5312 |
+| attach_transformer | 0.6126 | 1.805542 | 4.1932 |
+| prepare | 0.0095 | 1.797119 | 4.1791 |
+| denoise | 15.6808 | 5.719055 | 17.6165 |
+| collect_transformer | 0.0028 | 5.705322 | 17.6166 |
+| cleanup_transformer | 1.4444 | 5.705322 | 17.6167 |
+| load_vae | 0.2188 | 1.812561 | 5.3344 |
+| decode | 0.3391 | 3.834290 | 4.2052 |
+| collect_vae | 0.0001 | 2.314697 | 4.2054 |
+| cleanup_vae | 0.1383 | 2.314697 | 4.2054 |
+| save_image | 0.1085 | 2.312744 | 3.9176 |
+
+All three reports have no monitoring errors; native snapshots report no failure,
+quarantine, admission denial or temporary fallback. Native transformer completion
+collection retired 258 tickets to zero. The upstream processor logged min_frames/
+max_frames docstring diagnostics and group-offload warned about vision branches
+not executed in the text-only encoder. Those logs were preserved, not suppressed;
+there was no corresponding runtime exception or device mismatch.
+
+Artifacts: outputs/qwen21_{leaf,linear,vmm}_linux_512, image.png plus metrics.json.
+Raw console: .internal/logs/qwen21_{leaf,linear,vmm}_linux_512.log, local/ignored.
+All time/resource scopes remain in raw JSON. RAM is process RSS, GPU sampled
+absolute driver usage at 100 ms, not system commit, model residency or a hard
+instantaneous cap. Totals exclude bootstrap/import startup. No Windows speed
+ratio, 1024 Linux, other presets, quantized recipe, VAE offload variant, WSL or
+arbitrary-model support is inferred. The finite approved Linux trio is closed.
+
+### Official PyPI Diffusers 0.41.0 Windows compatibility gate (2026-10-11)
+
+The user executed three finite native BF16 generations from the primary host's
+Windows .venv after replacing only Diffusers with its official 0.41.0 PyPI
+package. Torch remained 2.12.1+cu132; no allocator source, binary, driver or
+residency ceiling changed. PYTHONPATH no longer injected the local fork.
+CPU checks preceded generation: 95 host tests plus 10 subtests, five LTX
+custom-block compatibility tests and 34 selected DDO CPU contracts passed.
+
+The first image attempt failed before transformer loading because the default
+AutoModel dispatch looked for the fork-only LTX2ImageTransformer2DModel export
+in installed Diffusers. Image minimal/linear/VMM runners were corrected to
+pass their custom-block transformer class explicitly to DDO's model_loader.
+Ten selected CPU checks, including an exact tiny-checkpoint round-trip with
+AutoModel/CUDA forbidden, passed before the successful user repeat.
+This was a host loading correction, not a generic DDO or allocator change.
+
+| Official package case | Denoise wall (s) | Tracked total (s) | Successful purge event (s) | Global sampled absolute GPU peak (GiB) | Global process RSS peak (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LTX image BF16, 1280x704, 8 steps, seed 43 | 13.7679 | 35.2343 | 1.6156 | 7.114185 | 27.3695 |
+| LTX video BF16, 1280x704, 5 s / 24 fps / 121 frames, 8 steps, seed 43 | 197.3890 | 259.0260 | 2.5028 | 5.142090 | 28.420605 |
+| Qwen-Image 2.1 base BF16, 512x512, 20 steps, seed 42 | 17.6734 | 36.639479 | 3.6663 | 6.120605 | 18.970501 |
+
+All three executed the Windows standby purge before the transformer using
+SeProfileSingleProcessPrivilege. Purge cost remains in tracked totals. These
+are staged-run totals, not shell wall time including import/bootstrap. GPU
+observations are sampled absolute driver usage, not allocator weight residency;
+RAM is process RSS, not system RAM or commit. Denoise is host phase wall time,
+not a pure kernel sum or steady-state per-step measurement.
+
+LTX image used real prompt, no PAG, native encoder then transformer, 4 GiB
+weight ceiling, total staging 1.5 GiB (image CLI 0.5), and 24.625 GiB source
+storage/registration. Resident VAE, no added tiling. Prior resident-VAE gate:
+13.9869 s denoise / 39.1770 s tracked total. Output PNG SHA256 is identical:
+877876A4A8E1143A59E51A737EF3EB7F05A27980A6A44D20FED80D2AB581CCED.
+
+LTX video retained native encoder ceiling 4 GiB, transformer ceiling 1.5 GiB,
+staging 1.5 GiB, source storage/registration 24.625 GiB, chunk sizes 1024,
+phase modulation, compact timesteps and in-place residuals. It used real
+image/prompt, no input audio, generated output audio, temporal CUDA streaming
+decode and resident VAE. Prior administrative-purge record:
+199.3626 s denoise / 262.4741 s total; recent resident-VAE gate:
+198.5835 s / 261.6728 s. MP4 SHA256 is identical to both:
+56BD4CF1D6F20CD2C978FDA6280902197A24FC179E303AC98F65EE02EB7FD891.
+Current report is completed, error=null; output audio [2,240480] at 48000 Hz
+is finite. Both LTX runs used the preserved joined-spans CUDA 12.8 DLL,
+SHA256 EC5AB4700EE5D171CC06D8E9EC99C549F8D6CC3DFBE7FEB2683B93ADD0E829E6.
+
+Qwen used the base checkpoint and capybara/wizard/candlelight prompt, CFG 1,
+native KV cache, source ceiling/registration 16 GiB, weight ceiling 4 GiB,
+staging 0.625 GiB, stock resident untiled VAE and no automatic cache trim.
+Text encoder remains official leaf compatibility. Its local independent
+custom blocks were loaded through trust_remote_code, not from published Hub
+code (the local code commit has not been pushed). The report records the
+official installed Diffusers path and version, completed status and error=null.
+The selected idle-trim DLL is unchanged, SHA256
+468A854EB550C6299C3DE785B65ECD4F4DF382C488B6F1C83AA6899983F12CFE.
+Image SHA256 matches the historical Windows 512-square VMM image:
+550C28BB34648ABE520D59C5C5506CB55488F221E8CCFB6F22D8E13CCD1B6CF1.
+That older run used full/USS monitoring and different phase reporting, so its
+43.6096 s total is not a matched package-release speedup. Linux timings are
+also not a matched Windows dependency comparison.
+
+Artifacts (raw evidence unchanged):
+- outputs/official_diffusers_041_image_purge: PNG and metrics/<run_slug>.json.
+- outputs/official_diffusers_041_video_purge: MP4 and metrics/modular_run.json.
+- outputs/official_diffusers_041_qwen512_purge: image.png and metrics.json.
+
+The selected Windows BF16 gate passed with identical generated files and no
+observed performance regression in the LTX cases. Single runs do not isolate
+small timing changes from cache/OS/observer variation. This does not validate
+all presets, FP8/SDNQ, other resolutions, Linux/WSL, or the historical conventional
+LTX image apps. See docs/official-diffusers.md for transition and limitations.

@@ -14,8 +14,10 @@ diffusers-dynamic-offloader, with its allocator submodule initialized.
     uv run --no-sync scripts/setup_custom_blocks.py
 
 The root .venv supports image and video. Add --extra sdnq for SDNQ.
-Diffusers is pinned to the fork's LTX image-support commit; video transformer
-improvements come from custom blocks, not a modified Diffusers installation.
+Diffusers is pinned to the official PyPI package `diffusers==0.41.0`.
+Model-specific image/video improvements come from independent custom blocks,
+not a modified Diffusers installation. CPU compatibility is checked separately
+from generation/performance acceptance. Do not inject a fork through PYTHONPATH.
 CUDA 13.2 Torch and audio pins follow the existing host environments.
 
 Custom-block clones live under ignored modular_diffusers/custom_blocks/.
@@ -29,6 +31,7 @@ Old image/video host repositories are optional and unchanged.
 | --- | --- |
 | LTX 2.3 image | [Image guide](docs/ltx2-image.md): linear, native VMM and SDNQ |
 | LTX 2.3 video | [Video guide](docs/ltx2-video.md): staged video/audio, BF16, saved FP8 and experimental SDNQ |
+| Qwen-Image 2.1 | [Candidate guide](docs/qwen-image-21.md): local BF16 base/Turbo modular blocks; CUDA validation pending |
 
 Run commands from the repository root with uv run --no-sync.
 Outputs, weights, virtual environments and custom-block clones are untracked.
