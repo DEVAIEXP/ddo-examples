@@ -86,6 +86,12 @@ For optional recipes, add the required `--extra fp8`, `--extra kernels` or
 uses. This setup uses `uv pip`; do not substitute `uv sync` without a matching
 package-based lock.
 
+The optional `--extra flash-attn` installs a third-party Windows FlashAttention
+2.9.1 wheel for Python 3.12, Torch 2.12.1 and CUDA 13.2. It does not install a
+Linux/WSL build or change the runners' attention backend. Installation alone
+does not establish kernel execution; backend and attention-mask compatibility
+must be validated separately. Ordinary recipes do not require this extra.
+
 ### Configure FFmpeg on Windows
 
 For video/audio, use an FFmpeg **shared** build containing DLLs such as

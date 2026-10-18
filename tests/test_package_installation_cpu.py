@@ -7,6 +7,15 @@ import tomllib
 ROOT = Path(__file__).parents[1]
 
 
+def test_flash_attention_is_optional_and_matches_windows_torch_stack():
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert not any(dep.startswith("flash-attn") for dep in metadata["project"]["dependencies"])
+    requirements = metadata["project"]["optional-dependencies"]["flash-attn"]
+    assert len(requirements) == 1
+    assert "flash_attn-2.9.1%2Bcu132torch2.12.1cxx11abiTRUE-cp312-cp312-win_amd64.whl" in requirements[0]
+    assert "sys_platform == 'win32' and python_version == '3.12'" in requirements[0]
+
+
 def test_default_sources_do_not_select_local_ddo():
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     sources = metadata["tool"]["uv"]["sources"]
