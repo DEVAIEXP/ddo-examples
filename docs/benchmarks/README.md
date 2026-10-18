@@ -1,55 +1,42 @@
 # Benchmarks by model
 
-Updated 2026-10-11. Reader-facing results use the same structure and comparison
-rules; the [detailed evidence log](../../experiments/dynamic_offload_results.md)
-retains dated measurements and raw acceptance, not a leaderboard.
+Measured model comparisons, grouped by platform. Each model's main page contains
+tables and hardware recommendations; scenario names link to their configuration,
+measurement scope and comparison limits.
 
-Continue on Windows using the [current handoff](../windows-handoff.md);
-the selected Linux sequence is closed, not permission for automatic reruns.
+| Model | Main comparison | Measurement details |
+| --- | --- | --- |
+| LTX 2.3 image | [Results and recommendations](ltx23-image.md) | [Scenario details](ltx23-image-details.md) |
+| LTX 2.3 video | [Results and recommendations](ltx23-video.md) | [Scenario details](ltx23-video-details.md) |
+| Qwen Image 2.1 | [Results and recommendations](qwen-image-21.md) | [Scenario details](qwen-image-21-details.md) |
 
-| Model/workload | Selected Windows closure | Selected Linux closure | Remaining |
-| --- | --- | --- | --- |
-| [LTX 2.3 image](ltx23-image.md) | BF16 VMM, resident/leaf VAE PASS | Same selected pair PASS | WSL; other presets not in this closure |
-| [LTX 2.3 video](ltx23-video.md) | Five-second BF16 VMM, resident/leaf VAE PASS | Same selected pair PASS | WSL; other recipes separate |
-| [Qwen Image 2.1](qwen-image-21.md) | Selected BF16 routes/VAE cases recorded | Shared 512-square leaf/linear/VMM trio PASS | Matched Windows gaps; Windows SDNQ; WSL |
+## Read the tables
 
-## Standard comparison rules
+See [test hardware and platform limits](hardware.md) for the reference machine
+and the separate Windows, native-Linux and WSL environments.
 
-Each page fixes checkpoint/revision, base/turbo variant, precision, prompt/input,
-resolution, seed, steps, video duration/fps/audio and output scope. Primary rows:
-VMM fast, linear auto/one_shot_fast and official Diffusers leaf where applicable.
-Controls/presets remain visible even if not tested; do not run the Cartesian
-product of all models, presets, VAE strategies, precisions and platforms.
+Main tables show denoise wall, seconds per step, tracked total and global sampled
+absolute GPU/process RSS peaks. Phase tables include text encoding, transformer
+and VAE measurements where recorded. Aggregated phases are labeled explicitly:
+their times must not be added to nested events, and phase memory peaks are never
+summed. Values use at most two decimals; missing observations are not zero.
 
-Report denoise wall, phase-average s/step (including warmup), completed CUDA warm
-mean only when available, tracked total, global sampled absolute GPU/RSS and
-per-phase elapsed/GPU/RSS. Use N/A, not zero, for unavailable fields. Separate
-RSS/USS, global/phase peaks and wall/CUDA scopes. Imports/bootstrap are outside
-tracked totals. Short-phase sampled peaks are not enforced instantaneous limits.
-Compare like workloads within a platform; no universal cross-platform ratio.
+The primary rows compare official Diffusers leaf with DDO linear, native fast
+VMM and protected NVMe where measured. Separate groups cover different VAE,
+precision, resolution or conditioning choices. Only selected successful results
+are shown; single observations are not statistical or all-model certification.
+Different drivers, caches, component routes and platform limits prevent causal
+cross-platform rankings. Low process RSS does not establish fit on low-RAM hardware.
 
-Coverage distinguishes selected PASS, historical/unmatched, OOM/failure, not
-tested, unsupported and not applicable. auto and one_shot_fast are equivalent
-linear resolutions, not two separate speed observations. low_ram_safe is a
-capacity/copy tradeoff, not proven lower RSS; warm_process needs a separate
-same-process repeated-run workload. Native VMM remains explicitly experimental
-outside its selected contracts. Protected nvme_baseline is not retuned here.
+## Choose a route
 
-Hardware recommendations separate transformer and VAE. Resident VAE when it
-fits; leaf when VRAM is tight and RAM allows; supported tiling/streaming when
-activation capacity requires it. Tiling does not remove weights/assembled output
-and can affect time/quality. Record executed routes rather than requested flags.
-Windows standby purge is optional but executed state is required for these
-performance comparisons; outside Windows it is a no-op, not a prerequisite.
+Use the model's recommendations rather than choosing a preset by name alone.
+Transformer speed, encoder memory and decoder capacity can favor different
+component strategies. Tiling is a VAE activation fallback when decode does not fit,
+not a guarantee that model weights or assembled outputs fit.
 
-## Remaining finite sequence
-
-1. Preserve the closed Qwen Linux comparison. Do not reopen its three cases or
-   native tuning automatically; details and full phase tables are in its page/log.
-2. On Windows, fill only explicit matched-data gaps and assess Qwen SDNQ with
-   the chosen checkpoint/backend. Preserve SDNQ forward math; start with its
-   compatible group-offload route, not assumed native VMM admission.
-3. Assess WSL independently, with its environment/capacity gate first. No WSL
-   support or output parity is inferred from native Linux.
-4. Review reproducible environments and local commits, then cut the selected
-   version. No publication, history rewrite or automatic benchmark expansion.
+- [Comparison summary](summary.md)
+- [Preset/runtime mapping](runtimes.md)
+- [Metric definitions](glossary.md)
+- [Reproduce the comparisons](reproduction.md)
+- [Contributor recording rules](recording.md)

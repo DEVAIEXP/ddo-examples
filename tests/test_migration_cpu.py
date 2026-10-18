@@ -22,7 +22,8 @@ class MigrationContracts(unittest.TestCase):
         manifest = tomllib.loads((ROOT / "pyproject.toml").read_text())
         self.assertEqual(manifest["project"]["name"], "ddo-examples")
         sources = manifest["tool"]["uv"]["sources"]
-        self.assertEqual(sources["diffusers-dynamic-offloader"]["path"], "../diffusers-dynamic-offloader")
+        self.assertNotIn("diffusers-dynamic-offloader", sources)
+        self.assertNotIn("ddo-vmm-allocator", sources)
         self.assertNotIn("LTX-2", str(sources))
         self.assertNotIn("ltx2.3-image-diffusers", str(sources))
 

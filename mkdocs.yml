@@ -1,0 +1,49 @@
+site_name: DDO examples
+site_description: Local review of model guides and measured comparisons
+docs_dir: docs
+site_dir: .internal/docs-preview/site
+dev_addr: 127.0.0.1:8000
+use_directory_urls: true
+theme:
+  name: mkdocs
+  locale: en
+  highlightjs: false
+plugins:
+  - search
+extra_javascript:
+  - docs/assets/mermaid.js
+hooks:
+  - tools/docs/preview.py
+watch:
+  - README.md
+  - AGENTS.md
+nav:
+  - Project: README.md
+  - User guides:
+      - Overview: docs/user/README.md
+      - Package installation: docs/user/setup.md
+      - Presets: docs/user/presets.md
+      - Shared controls: docs/user/runner-controls.md
+      - LTX image: docs/user/ltx2-image.md
+      - LTX video: docs/user/ltx2-video.md
+      - Qwen Image 2.1: docs/user/qwen-image-21.md
+      - Qwen SDNQ: docs/user/qwen-sdnq.md
+  - Benchmarks:
+      - Overview: docs/benchmarks/README.md
+      - Summary: docs/benchmarks/summary.md
+      - Runtimes and presets: docs/benchmarks/runtimes.md
+      - Labels and memory: docs/benchmarks/glossary.md
+      - LTX image: docs/benchmarks/ltx23-image.md
+      - LTX video: docs/benchmarks/ltx23-video.md
+      - Qwen Image 2.1: docs/benchmarks/qwen-image-21.md
+      - Recording rules: docs/benchmarks/recording.md
+      - Reproduction: docs/benchmarks/reproduction.md
+  - Developer guides:
+      - Overview: docs/developer/README.md
+      - Source setup: docs/developer/setup.md
+      - Architecture: docs/developer/architecture.md
+      - Diagnostics: docs/developer/diagnostics.md
+      - Runner interface: docs/developer/runner-interface.md
+      - Validation: docs/developer/validation.md
+      - Release procedure: docs/developer/releases.md
+      - Local documentation preview: docs/developer/docs-preview.md

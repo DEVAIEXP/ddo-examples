@@ -3,13 +3,47 @@
 This repository owns model-specific runners, reproduction conditions and results.
 DDO owns generic runtime implementation, API documentation and technical gates.
 
-- [Benchmark summary](benchmark-summary.md): start here for selected gains, losses and comparison limits.
-- [Benchmarks by model](benchmarks/README.md): shared comparison rules, closed LTX cases and Qwen/platform coverage gaps.
-- [Detailed evidence log](../experiments/dynamic_offload_results.md): dated measurements and limitations, including historical and rejected cases.
-- [Historical native reproduction manifest](benchmark-reproduction.md): original image fixtures and binary identities.
-- [Image runners](ltx2-image.md) and [video runners](ltx2-video.md): current invocation and options.
-- [Host migration acceptance](migration-validation.md): environment-specific acceptance, not inherited performance.
-- [Linux/WSL continuation](platform-validation-handoff.md): finite post-Windows gates, environment/binary checks and version-cut boundaries.
+- [Benchmark summary](summary.md): start here for selected gains, losses and comparison limits.
+- [Benchmarks by model](README.md): shared comparison rules, closed LTX cases and Qwen/platform coverage gaps.
+- [Reproduction guide](reproduction.md): current host workloads and recorded binary identities.
+- [Image runners](../user/ltx2-image.md) and [video runners](../user/ltx2-video.md): current invocation and options.
+- [Host migration acceptance](../developer/validation.md): environment-specific acceptance, not inherited performance.
+- [Linux/WSL continuation](../developer/validation.md): finite post-Windows gates, environment/binary checks and version-cut boundaries.
+
+## Table readability
+
+Place a short column explanation before each model's tables and link the
+[glossary](glossary.md). Use explicit headers such as **Peak GPU (absolute, GiB)**
+and **Peak RAM (RSS, GiB)**, with global versus phase scope stated. RSS alone
+names a memory metric, not its peak; do not assume console Peak VRAM is absolute.
+Label tracked totals and wall averages separately from completed CUDA timings.
+Do not rename historical raw fields or change recorded values to match a new label.
+
+## Matched comparisons, not an exhaustive matrix
+
+Use official Diffusers offload as the control, then the selected DDO runtimes
+with the same platform/model recipe. Keep transformer and VAE phase comparisons
+separate, with identical timing/memory scopes. Full-pipeline controls without
+isolated phases cannot supply missing phase values.
+
+Freeze actual code/environment revisions, model/input identities, precision,
+schedule/shape/steps, compute options, encoder/connector lifecycle, VAE route,
+streaming/tiling, monitor and Windows purge policy before changing the offload
+runtime. Runtime-specific storage/residency settings remain explicit; do not
+force WSL and Linux to share an unvalidated registration ceiling.
+
+BF16 and saved FP8 are separate offload comparisons. Same-precision official
+versus DDO assesses offload; BF16 versus FP8 under one runtime assesses the
+selected quantization recipe, not the allocator alone. SDNQ does not fill FP8.
+Do not duplicate interrupted/intermediate candidates in headline tables.
+
+Inventory existing JSON artifacts first. Reuse only genuinely matching records;
+propose the minimal missing controls/repeats for approval. Compatibility acceptance
+is not matched performance coverage. No automatic 27-case platform matrix or
+all-preset expansion is authorized. If a small gain does not justify setup or
+integration complexity, recommend the official control rather than oversell DDO.
+Hardware recommendations must follow measured GPU/RAM phase tradeoffs, not
+assume `low_ram_safe` or FP8 always minimizes memory.
 
 ## Recording a case
 
