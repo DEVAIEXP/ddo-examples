@@ -10,11 +10,18 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ddo-preset", default="auto")
+    parser.add_argument(
+        "--text-encoder-preset",
+        choices=("diffusers_leaf_offload_compat",),
+        help="Explicit encoder policy for matched transformer comparisons; default follows the existing preset.",
+    )
     parser.add_argument("--resident-module-budget-gb", type=float)
     parser.add_argument("--pin-weight-budget-gb", type=float)
     add_reporting_arguments(parser)
@@ -55,7 +62,7 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parser.parse_args(argv)
+    args = parse_common_arguments(parser, argv)
     if sum((args.vae_linear_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE linear, leaf and resident overrides are mutually exclusive")
     if args.vae_linear_offload and args.ddo_preset not in (
@@ -71,6 +78,14 @@ def parse_args(argv=None):
     if args.vae_alias_residuals and not args.vae_no_temporal_cache:
         parser.error("--vae-alias-residuals requires --vae-no-temporal-cache")
     return args
+
+
+def text_encoder_offload_options(args):
+    """Pass an explicit auxiliary route without changing transformer policy."""
+    options = {"preset": args.text_encoder_preset or args.ddo_preset}
+    if args.text_encoder_preset:
+        options.update(group_offload=True, dynamic_offload=False, offload_type="leaf_level")
+    return options
 
 
 def main():
@@ -160,7 +175,7 @@ def main():
             text_result = enable_offload(
                 text_encoder,
                 component="text_encoder",
-                preset=args.ddo_preset,
+                **text_encoder_offload_options(args),
                 execution_device=device,
                 use_environment=False,
                 record_event=run.tracker.record_event,

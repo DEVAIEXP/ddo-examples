@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=("base", "turbo"), default="base")
@@ -26,7 +28,7 @@ def parse_args():
     add_custom_blocks_arguments(parser)
     parser.add_argument("--vae-tiling", action="store_true", help="Opt-in native tiling; inspect output for seams.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/qwen_image_21_minimal")
-    return parser.parse_args()
+    return parse_common_arguments(parser)
 
 
 def main():
@@ -69,6 +71,7 @@ def main():
         "steps": [],
     }
     tracker = RunTracker(device, metrics)
+    purge_for_runner(args, "before_run", preset=args.ddo_preset, record_event=tracker.record_event)
     phase = tracker.step_start("encode")
     text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
         model,
@@ -102,15 +105,17 @@ def main():
             encoded = {
                 name: value.cpu() if isinstance(value, torch.Tensor) else value for name, value in encoded.items()
             }
-            tracker.record_ddo_metrics(text_result.metrics_snapshot(), "text_encoder")
+            record_runner_report(args, tracker, text_result.metrics_snapshot(), "text_encoder")
     finally:
         remove_dynamic_offload(text_encoder)
     del text_encoder, text_result, processor, prompt_pipe
     gc.collect()
     flush()
     tracker.step_end("encode", phase)
+    purge_for_runner(args, "after_text_encoder", preset=args.ddo_preset, record_event=tracker.record_event)
 
     phase = tracker.step_start("transformer")
+    purge_for_runner(args, "before_transformer", preset=args.ddo_preset, record_event=tracker.record_event)
     transformer = QwenImage21Transformer2DModel.from_pretrained(
         model,
         subfolder="transformer",
@@ -141,7 +146,7 @@ def main():
                 generator=torch.Generator().manual_seed(args.seed),
             )
             latent = denoise(state=prepared, output="latents").cpu()
-            tracker.record_ddo_metrics(result.metrics_snapshot(), "transformer")
+            record_runner_report(args, tracker, result.metrics_snapshot(), "transformer")
             height, width = prepared.get("height"), prepared.get("width")
     finally:
         remove_dynamic_offload(transformer)
@@ -160,6 +165,7 @@ def main():
     tracker.step_end("decode", phase)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     image.save(args.output_dir / "image.png")
+    purge_for_runner(args, "after_run", preset=args.ddo_preset, record_event=tracker.record_event)
     metrics.update(status="completed", total_elapsed_sec=tracker.total_elapsed())
     (args.output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 

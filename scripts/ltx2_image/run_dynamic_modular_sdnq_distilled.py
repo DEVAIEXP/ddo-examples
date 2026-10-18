@@ -89,6 +89,8 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args():
     parser = argparse.ArgumentParser(description="LTX 2.3 distilled modular SDNQ text-to-image DDO runner.")
     parser.add_argument("--bits", type=int, choices=(4, 8), default=4, help="SDNQ transformer bit depth.")
@@ -128,7 +130,7 @@ def parse_args():
         "auto", "one_shot_fast", "low_ram_safe", "wsl_compat", "warm_process",
         "diffusers_leaf_offload_compat",
     ), help="DDO packed SDNQ preset or official leaf control.")
-    parser.add_argument("--purge-before-transformer", action="store_true")
+    parser.add_argument("--purge-before-transformer", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--memory-monitor", choices=("rss", "full"), default="full")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
@@ -157,7 +159,8 @@ def parse_args():
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
-    return parser.parse_args()
+    args = parse_common_arguments(parser)
+    return args
 
 
 def apply_leaf_group_offload(model) -> None:
@@ -304,7 +307,7 @@ def main():
         raise RuntimeError("CUDA is required for this runner.")
     if args.width % 32 != 0 or args.height % 32 != 0:
         raise ValueError("Width and height must be divisible by 32.")
-    settings_environ = os.environ.copy()
+    settings_environ = runner_settings_environ(args)
     settings_environ["DDO_PRESET"] = args.preset
     if args.resident_module_budget_gb is not None:
         settings_environ["DDO_RESIDENT_MODULE_BUDGET_GB"] = str(args.resident_module_budget_gb)
@@ -384,6 +387,7 @@ def main():
         DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS, memory_monitor=args.memory_monitor
     )
     record_event = tracker.record_event
+    purge_for_runner(args, "before_run", preset=args.preset, record_event=record_event, print_message=SHOW_METRICS)
     denoise_progress_callback = make_denoise_progress_callback(args, run_metrics)
 
     print(
@@ -455,6 +459,7 @@ def main():
 
     del prompt_state, prompt_pipe, text_encoder, tokenizer
     cleanup_runtime_state(record_event, "cleanup_after_text_encoder")
+    purge_for_runner(args, "after_text_encoder", preset=args.preset, record_event=record_event, print_message=SHOW_METRICS)
     tracker.step_end("Pass 0: Encode prompts", t0)
 
     t0 = tracker.step_start(f"Pass 1: Generate at {args.width}x{args.height}")
@@ -503,9 +508,9 @@ def main():
     del connector_state, connector_pipe, connectors
     del prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask
     cleanup_runtime_state(record_event, "cleanup_after_connectors")
-    purge_result = maybe_purge_windows_standby_cache(
+    purge_result = purge_for_runner(args,
         "before_transformer", preset="one_shot_fast",
-        environ={"DDO_PURGE_WINDOWS_STANDBY_BEFORE_TRANSFORMER": "1" if args.purge_before_transformer else "0"},
+
         record_event=record_event, print_message=SHOW_METRICS,
     )
     run_metrics["standby_purge"] = {"requested": args.purge_before_transformer, "result": purge_result}
@@ -673,6 +678,7 @@ def main():
     tracker.step_end("Save Image", t0)
 
     total_time = tracker.total_elapsed()
+    purge_for_runner(args, "after_run", preset=args.preset, record_event=record_event, print_message=SHOW_METRICS)
     run_metrics["total_elapsed_sec"] = round(total_time, 4)
     run_metrics["global_peak_vram_gb"] = round(tracker.global_peak_vram, 4)
     run_metrics["global_peak_ram_gb"] = round(tracker.global_peak_ram, 4)

@@ -65,6 +65,8 @@ PROMPT = (
 NEGATIVE_PROMPT = ""
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default=MODEL_PATH)
@@ -85,7 +87,8 @@ def parse_args():
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=SHOW_METRICS)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=SAVE_METRICS)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
-    return parser.parse_args()
+    args = parse_common_arguments(parser)
+    return args
 
 
 def cleanup(record_event, name: str, *, repeats: int = 1) -> None:
@@ -165,7 +168,7 @@ def main():
     tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS)
     record_event = tracker.record_event
 
-    maybe_purge_windows_standby_cache("before_run", preset=PRESET, record_event=record_event)
+    purge_for_runner(args, "before_run", preset=PRESET, record_event=record_event)
 
     generator = torch.Generator(device="cpu").manual_seed(SEED)
 
@@ -216,7 +219,7 @@ def main():
     del text_encoder_result
     del prompt_state, prompt_pipe, text_encoder, tokenizer
     cleanup(record_event, "cleanup_after_text_encoder")
-    maybe_purge_windows_standby_cache("after_text_encoder", preset=PRESET, record_event=record_event)
+    purge_for_runner(args, "after_text_encoder", preset=PRESET, record_event=record_event)
     tracker.step_end("Pass 0: Encode prompts", t0)
 
     t0 = tracker.step_start(f"Pass 1: Generate at {WIDTH}x{HEIGHT}")
@@ -257,7 +260,7 @@ def main():
     del prompt_embeds, prompt_attention_mask, connector_state, connector_pipe, connectors
     cleanup(record_event, "cleanup_after_connectors")
 
-    maybe_purge_windows_standby_cache("before_transformer", preset=PRESET, record_event=record_event)
+    purge_for_runner(args, "before_transformer", preset=PRESET, record_event=record_event)
 
     event_t0 = time.time()
     transformer_load = from_pretrained_with_dynamic_offload(
@@ -391,6 +394,7 @@ def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / f"ddo_minimal_{WIDTH}x{HEIGHT}_steps{STEPS}_seed{SEED}.png"
     image.save(output_path)
+    purge_for_runner(args, "after_run", preset=PRESET, record_event=record_event)
 
     print("\n" + "=" * 70)
     print(f"  TOTAL: {tracker.total_elapsed():.1f}s")

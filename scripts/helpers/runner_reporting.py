@@ -34,7 +34,8 @@ def add_reporting_arguments(parser):
     )
     parser.add_argument(
         "--purge-before-transformer",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Optional Windows-only standby helper; success is reported, not assumed.",
     )
     return parser
@@ -69,6 +70,7 @@ class RunnerReporting:
         self.started = time.perf_counter()
 
     def __enter__(self):
+        self.purge("before_run")
         return self
 
     @contextmanager
@@ -84,6 +86,8 @@ class RunnerReporting:
         finally:
             try:
                 self.tracker.step_end(name, start)
+                if original is None and name == "cleanup_text_encoder":
+                    self.purge("after_text_encoder")
             except BaseException as monitor_error:
                 if original is None:
                     raise
@@ -97,21 +101,24 @@ class RunnerReporting:
             print(value.format_profile(), flush=True)
 
     def purge_before_transformer(self):
-        from diffusers_dynamic_offloader import maybe_purge_windows_standby_cache
-
-        result = maybe_purge_windows_standby_cache(
-            "before_transformer",
-            preset="one_shot_fast",
-            environ={
-                "DDO_PURGE_WINDOWS_STANDBY_BEFORE_TRANSFORMER": "1" if self.args.purge_before_transformer else "0"
-            },
-            print_message=self.args.show_metrics,
-            record_event=self.tracker.record_event,
-        )
+        result = self.purge("before_transformer")
         self.metrics["standby_purge"] = {
             "requested": self.args.purge_before_transformer,
             "result": result,
         }
+
+    def purge(self, phase):
+        from .runner_controls import purge_for_runner
+
+        result = purge_for_runner(
+            self.args, phase, preset=("one_shot_fast" if getattr(self.args, "ddo_backend", "linear") == "vmm"
+                                     else getattr(self.args, "ddo_preset", "off")),
+            print_message=self.args.show_metrics, record_event=getattr(self.tracker, "record_event", None),
+        )
+        self.metrics.setdefault("standby_purges", {})[phase] = {
+            "requested": getattr(self.args, "purge_" + phase, None), "result": result,
+        }
+        return result
 
     def __exit__(self, exc_type, error, traceback):
         if error is not None:
@@ -123,6 +130,7 @@ class RunnerReporting:
             )
         else:
             self.metrics["status"] = "completed"
+            self.purge("after_run")
         self.metrics.update(
             total_elapsed_sec=time.perf_counter() - self.started,
             global_peak_vram_gb=self.tracker.global_peak_vram,

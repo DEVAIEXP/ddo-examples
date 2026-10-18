@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
 
@@ -82,7 +84,7 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parser.parse_args(argv)
+    args = parse_common_arguments(parser, argv)
     if sum((args.vae_vmm_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE native, leaf and resident overrides are mutually exclusive")
     if args.vae_vmm_offload:

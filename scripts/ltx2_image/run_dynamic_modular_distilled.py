@@ -109,6 +109,8 @@ def parse_optional_float(value: str | None) -> float | None:
     return float(value)
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default=MODEL_PATH)
@@ -158,7 +160,8 @@ def parse_args():
     parser.add_argument("--pin-weight-budget-gb", type=float, default=None)
     parser.add_argument("--reset-dynamic-memory-after-run", action=argparse.BooleanOptionalAction, default=RESET_DYNAMIC_MEMORY_AFTER_RUN)
     parser.add_argument("--print-presets", action="store_true")
-    return parser.parse_args()
+    args = parse_common_arguments(parser)
+    return args
 
 
 def build_run_slug(seed):
@@ -271,7 +274,7 @@ def main():
     TEXT_ENCODER_LOW_CPU_MEM_USAGE = args.text_encoder_low_cpu_mem_usage
     MODEL_LOW_CPU_MEM_USAGE = args.low_cpu_mem_usage
 
-    settings_environ = os.environ.copy()
+    settings_environ = runner_settings_environ(args)
     if args.resident_module_budget_gb is not None:
         settings_environ["DDO_RESIDENT_MODULE_BUDGET_GB"] = str(args.resident_module_budget_gb)
     if args.max_resident_module_budget_gb is not None:
@@ -414,7 +417,7 @@ def main():
     step_start = tracker.step_start
     step_end = tracker.step_end
 
-    run_metrics["purge_windows_standby_before_run"] = maybe_purge_windows_standby_cache(
+    run_metrics["purge_windows_standby_before_run"] = purge_for_runner(args,
         DYNAMIC_OFFLOAD_SETTINGS,
         "before_run",
         record_event=record_event,
@@ -481,7 +484,7 @@ def main():
         del prompt_state
         del prompt_pipe, text_encoder, tokenizer
         cleanup_runtime_state(record_event, "cleanup_after_text_encoder")
-        run_metrics["purge_windows_standby_after_text_encoder"] = maybe_purge_windows_standby_cache(
+        run_metrics["purge_windows_standby_after_text_encoder"] = purge_for_runner(args,
             DYNAMIC_OFFLOAD_SETTINGS,
             "after_text_encoder",
             record_event=record_event,
@@ -551,7 +554,7 @@ def main():
         }
 
         run_metrics[f"purge_windows_standby_before_transformer_{repeat_index + 1}"] = (
-            maybe_purge_windows_standby_cache(
+            purge_for_runner(args,
                 DYNAMIC_OFFLOAD_SETTINGS,
                 "before_transformer",
                 record_event=record_event,
@@ -803,7 +806,7 @@ def main():
         if SAVE_METRICS:
             metrics_path.write_text(json.dumps(run_metrics, indent=2), encoding="utf-8")
         print("  Dynamic memory state reset after run.")
-    run_metrics["purge_windows_standby_after_run"] = maybe_purge_windows_standby_cache(
+    run_metrics["purge_windows_standby_after_run"] = purge_for_runner(args,
         DYNAMIC_OFFLOAD_SETTINGS,
         "after_run",
         record_event=record_event,

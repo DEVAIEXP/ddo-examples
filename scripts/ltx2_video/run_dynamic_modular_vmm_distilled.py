@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
@@ -102,7 +104,7 @@ def parse_args(argv=None):
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     from scripts.helpers.ltx2.video_entrypoints import configure_parser
     configure_parser(parser, "vmm")
-    args = parser.parse_args(argv)
+    args = parse_common_arguments(parser, argv)
     args.runner_entrypoint = "vmm"
     if args.compile_triton_execution:
         if not (args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
@@ -491,6 +493,7 @@ def run(args):
     settings = DynamicOffloadSettings.from_env(
         execution_device=device, offload_device="cpu",
         default_preset=args.ddo_preset if args.ddo_backend == "linear" else "one_shot_fast",
+        environ=runner_settings_environ(args),
     )
     if args.ddo_backend == "vmm":
         settings = replace(settings, config=replace(route.build_config_from_args(args),
@@ -525,8 +528,8 @@ def run(args):
     }
 
     def report(value, name):
-        tracker.record_ddo_metrics(value, component=name)
-        if args.show_profile and not args.show_metrics:
+        record_runner_report(args, tracker, value, component=name)
+        if args.show_profile and (not args.show_metrics or args.metrics_level < 2):
             print(value.format_profile())
 
     def inspect(phase, module=None):
@@ -575,7 +578,7 @@ def run(args):
         torch.cuda.empty_cache()
 
     try:
-        maybe_purge_windows_standby_cache(settings, "before_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "before_run", record_event=tracker.record_event)
         start = tracker.step_start("text_encoder")
         current_pipe = load_stage("text_encoder")
         current_pipe.load_components(names="tokenizer", local_files_only=args.local_files_only)
@@ -590,7 +593,7 @@ def run(args):
             finish_phase("text_encoder", start, current_pipe)
         del encoder_result, encoder_config
         current_pipe = None
-        maybe_purge_windows_standby_cache(settings, "after_text_encoder", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_text_encoder", record_event=tracker.record_event)
 
         start = tracker.step_start("connectors")
         current_pipe = load_stage("connectors", ["connectors"])
@@ -749,7 +752,7 @@ def run(args):
                 report(result.detach_auxiliary_cpu_sources(enabled=True), "transformer_auxiliary_sources")
             inspect("transformer_attached", transformer)
             tracker.step_end("attach_transformer", start)
-            maybe_purge_windows_standby_cache(settings, "before_transformer", record_event=tracker.record_event)
+            purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
             start = tracker.step_start("denoise")
             denoise_context_report = metrics.setdefault("denoise_execution_context_executed", {})
             if args.diagnose_denoise:
@@ -903,7 +906,7 @@ def run(args):
                              scope="aggregate_wall_time_not_an_additional_phase")
         metrics["status"] = "completed"
         metrics["output_path"] = str(output_path)
-        maybe_purge_windows_standby_cache(settings, "after_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics["status"], metrics["error"] = "failed", repr(error)

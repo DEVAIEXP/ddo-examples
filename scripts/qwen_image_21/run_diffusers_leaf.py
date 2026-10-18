@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
@@ -28,7 +30,7 @@ def parse_args(argv=None):
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--vae-tiling", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/qwen21_base_diffusers_leaf_20steps")
-    return parser.parse_args(argv)
+    return parse_common_arguments(parser, argv, purge_phases=("before_run", "before_transformer", "after_run"))
 
 
 def main():

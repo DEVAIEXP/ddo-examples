@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
@@ -80,6 +82,8 @@ def parse_args(argv=None):
     parser.add_argument("--reuse-rotary-embeddings", action=argparse.BooleanOptionalAction, default=True,
                         help="Prepare generation-local RoPE once; requires the updated local Diffusers forward.")
     parser.add_argument("--release-pytorch-host-cache-before-transformer", action="store_true")
+    parser.add_argument("--release-pytorch-host-cache-before-vae", action="store_true",
+                        help="Explicitly release unused PyTorch pinned host cache after transformer retirement; never clears native source storage.")
     parser.add_argument("--detach-transformer-auxiliary-cpu-sources", action="store_true")
     parser.add_argument("--inspect-host-memory-phases", action="store_true")
     parser.add_argument("--diagnose-denoise", action="store_true",
@@ -98,7 +102,7 @@ def parse_args(argv=None):
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=2)
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
-    args = parser.parse_args(argv)
+    args = parse_common_arguments(parser, argv)
     args.runner_entrypoint = "diagnostics"
     if args.compile_triton_execution:
         if not (args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
@@ -255,6 +259,17 @@ def group_stream_for_component(args, component):
 def denoise_execution_mode(args):
     """Avoid the reproduced TorchAO group-hook inference-mode alias failure."""
     return "no_grad" if args.fp8_group_offload_control else "inference_mode"
+
+
+def validate_allocator_controls(args, native):
+    """Allow equal local model math in controls; keep allocator experiments native."""
+    native_controls = (
+        args.fused_rms_modulation or args.fused_rotary_pair
+        or args.release_pytorch_host_cache_before_transformer
+        or args.detach_transformer_auxiliary_cpu_sources or args.inspect_host_memory_phases
+    )
+    if native_controls and not native and not args.fp8_group_offload_control:
+        raise ValueError("Native video controls require --ddo-backend vmm --ddo-preset auto.")
 
 
 def build_transformer_config(args, config):
@@ -477,14 +492,11 @@ def run(args):
     device, dtype = "cuda:0", torch.bfloat16
     route = resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset)
     native = route.requires_native_bootstrap
-    native_controls = (args.feed_forward_chunk_size or args.normalization_chunk_size or args.phase_modulation or args.compact_timesteps or args.inplace_residuals or args.fused_rms_modulation or args.fused_rotary_pair or
-                       args.release_pytorch_host_cache_before_transformer or
-                       args.detach_transformer_auxiliary_cpu_sources or args.inspect_host_memory_phases)
-    if native_controls and not native and not args.fp8_group_offload_control:
-        raise ValueError("Native video controls require --ddo-backend vmm --ddo-preset auto.")
+    validate_allocator_controls(args, native)
     settings = DynamicOffloadSettings.from_env(
         execution_device=device, offload_device="cpu",
         default_preset=args.ddo_preset if args.ddo_backend == "linear" else "one_shot_fast",
+        environ=runner_settings_environ(args),
     )
     if args.ddo_backend == "vmm":
         settings = replace(settings, config=replace(route.build_config_from_args(args),
@@ -519,8 +531,8 @@ def run(args):
     }
 
     def report(value, name):
-        tracker.record_ddo_metrics(value, component=name)
-        if args.show_profile and not args.show_metrics:
+        record_runner_report(args, tracker, value, component=name)
+        if args.show_profile and (not args.show_metrics or args.metrics_level < 2):
             print(value.format_profile())
 
     def inspect(phase, module=None):
@@ -569,7 +581,7 @@ def run(args):
         torch.cuda.empty_cache()
 
     try:
-        maybe_purge_windows_standby_cache(settings, "before_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "before_run", record_event=tracker.record_event)
         start = tracker.step_start("text_encoder")
         current_pipe = load_stage("text_encoder")
         current_pipe.load_components(names="tokenizer", local_files_only=args.local_files_only)
@@ -584,7 +596,7 @@ def run(args):
             finish_phase("text_encoder", start, current_pipe)
         del encoder_result, encoder_config
         current_pipe = None
-        maybe_purge_windows_standby_cache(settings, "after_text_encoder", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_text_encoder", record_event=tracker.record_event)
 
         start = tracker.step_start("connectors")
         current_pipe = load_stage("connectors", ["connectors"])
@@ -743,7 +755,7 @@ def run(args):
                 report(result.detach_auxiliary_cpu_sources(enabled=True), "transformer_auxiliary_sources")
             inspect("transformer_attached", transformer)
             tracker.step_end("attach_transformer", start)
-            maybe_purge_windows_standby_cache(settings, "before_transformer", record_event=tracker.record_event)
+            purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
             start = tracker.step_start("denoise")
             denoise_context_report = metrics.setdefault("denoise_execution_context_executed", {})
             if args.diagnose_denoise:
@@ -809,7 +821,11 @@ def run(args):
         torch.cuda.empty_cache()
         invoke_stage(load_stage("trim"), payload, "cpu")
 
-        start = tracker.step_start("decode_and_save")
+        if args.release_pytorch_host_cache_before_vae:
+            report(release_pytorch_host_cache(enabled=True, phase="before_vae", device=device),
+                   "host_cache_before_vae")
+
+        decode_and_save_start = time.time()
         stem = f"ltx23_modular_{args.width}x{args.height}_{args.seconds}s_seed{args.seed}"
         if args.output_type == "latent":
             output_path = output_dir / (stem + ".pt")
@@ -829,6 +845,7 @@ def run(args):
                                   ("audio_mel", LTX2VideoAudioMelDecoderStep(), ["audio_vae"]),
                                   ("audio", LTX2VideoVocoderStep(), ["vocoder"])]
             for name, decoder_block, component_names in decoder_stages:
+                load_start = tracker.step_start("load_decode_" + name)
                 current_pipe = make_phase_pipeline(decoder_block, args.decode_device,
                                                    args.distilled_model, args.local_files_only)
                 for component in component_names:
@@ -843,17 +860,24 @@ def run(args):
                 elif name == "audio":
                     audio_rate = current_pipe.vocoder.config.output_sampling_rate
                 current_pipe.to(args.decode_device)
+                if name == "video":
+                    metrics["vae_decode_route"] = "none"
+                tracker.step_end("load_decode_" + name, load_start)
                 payload["output_type"] = "pil"
                 input_device = "cpu" if args.stream_video_decode and name == "video" else args.decode_device
+                decode_start = tracker.step_start("decode_" + name)
                 invoke_stage(current_pipe, payload, input_device)
+                tracker.step_end("decode_" + name, decode_start)
                 if name != "audio_mel":
                     decoded[name] = payload.pop("videos" if name == "video" else "audio")
                 if args.stream_video_decode and name == "audio":
                     payload.pop("generated_mel_spectrograms", None)
+                cleanup_start = tracker.step_start("cleanup_decode_" + name)
                 current_pipe.unload_components(component_names)
                 current_pipe = None
                 gc.collect()
                 torch.cuda.empty_cache()
+                tracker.step_end("cleanup_decode_" + name, cleanup_start)
             output_path = output_dir / (stem + ".mp4")
             frames, waveform = decoded["video"][0], decoded["audio"][0].float().cpu()
             if len(frames) != payload["num_frames"] or any(frame.size != (args.width, args.height) for frame in frames):
@@ -863,12 +887,15 @@ def run(args):
             metrics["decoded_media"] = dict(frames=len(frames), width=args.width, height=args.height,
                                            audio_shape=list(waveform.shape), audio_sample_rate=audio_rate,
                                            audio_finite=True)
+            save_start = tracker.step_start("save_video")
             encode_video(frames, fps=args.frame_rate, output_path=str(output_path),
                          audio=waveform, audio_sample_rate=audio_rate)
-        tracker.step_end("decode_and_save", start)
+            tracker.step_end("save_video", save_start)
+        tracker.record_event("decode_and_save", time.time() - decode_and_save_start,
+                             scope="aggregate_wall_time_not_an_additional_phase")
         metrics["status"] = "completed"
         metrics["output_path"] = str(output_path)
-        maybe_purge_windows_standby_cache(settings, "after_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics["status"], metrics["error"] = "failed", repr(error)

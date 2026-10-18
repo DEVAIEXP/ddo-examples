@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT))
 REVISION = "f5c712e93c52283cb101da26d4a4544c808666bf"
 
 
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ddo-backend", choices=("linear",), default="linear")
@@ -53,7 +55,7 @@ def parse_args(argv=None):
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args(argv)
+    args = parse_common_arguments(parser, argv)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
             not math.isfinite(args.frame_rate) or args.frame_rate <= 0 or not 1 <= args.steps <= 8):
@@ -167,7 +169,7 @@ def main():
     transformer_type = next(spec.type_hint for spec in blocks.expected_components if spec.name == "transformer")
     device, dtype = "cuda:0", torch.bfloat16
     settings = DynamicOffloadSettings.from_env(execution_device=device, offload_device="cpu",
-                                              default_preset=args.ddo_preset)
+                                              default_preset=args.ddo_preset, environ=runner_settings_environ(args))
     metrics = {"runner": Path(__file__).stem, "events": [], "steps": [], "requested_controls": vars(args).copy()}
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     active = []
@@ -207,7 +209,7 @@ def main():
         for component, result in active:
             with result.cleanup_on_error():
                 report = result.metrics_snapshot(collect_completed=True)
-                tracker.record_ddo_metrics(report, component)
+                record_runner_report(args, tracker, report, component)
                 if args.show_profile and not args.show_metrics:
                     print(report.format_profile())
                 if result.route == "dynamic_offload":
@@ -220,7 +222,7 @@ def main():
         torch.cuda.empty_cache()
 
     try:
-        maybe_purge_windows_standby_cache(settings, "before_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "before_run", record_event=tracker.record_event)
         # 2. Encode text, then release encoder weights before loading connectors.
         start = tracker.step_start("text_encoder")
         pipe = load_phase(stages["text_encoder"])
@@ -234,7 +236,7 @@ def main():
         run_stage(pipe, state, device)
         finish_phase("text_encoder", start, pipe)
         pipe = None
-        maybe_purge_windows_standby_cache(settings, "after_text_encoder", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_text_encoder", record_event=tracker.record_event)
 
         # 3. Connect text embeddings to the video/audio transformer inputs.
         start = tracker.step_start("connectors")
@@ -285,7 +287,7 @@ def main():
             torch_dtype=dtype, low_cpu_mem_usage=True, local_files_only=args.local_files_only,
             apply_dynamic=False, dynamic_offload_config=settings.config if settings.enabled else None)
         transformer = loaded.module
-        tracker.record_ddo_metrics(loaded.metrics_snapshot(), "transformer_load")
+        record_runner_report(args, tracker, loaded.metrics_snapshot(), "transformer_load")
         del loaded
         pipe = load_phase(stages["prepare"], ["vae", "audio_vae", "scheduler"])
         pipe.update_components(transformer=transformer)
@@ -310,7 +312,7 @@ def main():
                                audio_guider=exports.LTX2VideoAudioGuidance(guidance_scale=1.0))
         result = attach(transformer, "transformer")
         tracker.step_end("attach_transformer", start)
-        maybe_purge_windows_standby_cache(settings, "before_transformer", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
         start = tracker.step_start("denoise")
         with result.cleanup_on_error(), result.profile_run() as profile_report:
             run_stage(pipe, state, device, retain={"latents", "audio_latents"})
@@ -371,7 +373,7 @@ def main():
         encode_video(video, fps=args.frame_rate, output_path=str(output_path), audio=audio, audio_sample_rate=audio_rate)
         tracker.step_end("decode_and_save", start)
         metrics.update(status="completed", output_path=str(output_path))
-        maybe_purge_windows_standby_cache(settings, "after_run", record_event=tracker.record_event)
+        purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics.update(status="failed", error=repr(error))
