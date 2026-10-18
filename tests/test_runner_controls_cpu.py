@@ -19,6 +19,24 @@ RUNNERS = sorted(path for model in ("ltx2_image", "ltx2_video", "qwen_image_21")
                  for path in (ROOT / "scripts" / model).glob("run*.py"))
 
 
+@pytest.mark.parametrize("backend_name,preset", [
+    ("vmm", "auto"), ("vmm", "nvme_baseline"), ("linear", "auto"),
+])
+def test_backend_reporting_preserves_base_settings(backend_name, preset):
+    from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
+    from scripts.helpers.runner_controls import backend_reporting_fields
+
+    backend = resolve_dynamic_offload_backend(backend_name, preset, running_on_wsl=False)
+    settings = SimpleNamespace(requested_preset="one_shot_fast", effective_preset="one_shot_fast")
+    before = vars(settings).copy()
+    fields = backend_reporting_fields(backend, settings)
+    assert fields["ddo_backend"] == backend_name
+    assert fields["dynamic_offload_requested_preset"] == preset
+    assert fields["dynamic_offload_effective_preset"] == backend.effective_preset
+    assert fields["dynamic_offload_base_effective_preset"] == "one_shot_fast"
+    assert vars(settings) == before
+
+
 def parser_body(path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "parse_args")

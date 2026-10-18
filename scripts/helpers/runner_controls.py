@@ -92,6 +92,17 @@ def runner_settings_environ(args, environ=None):
     return values
 
 
+def backend_reporting_fields(backend, settings):
+    """Distinguish the transformer selector from its base settings preset."""
+    return {
+        "ddo_backend": backend.backend,
+        "dynamic_offload_requested_preset": backend.requested_preset,
+        "dynamic_offload_effective_preset": backend.effective_preset,
+        "dynamic_offload_base_requested_preset": settings.requested_preset,
+        "dynamic_offload_base_effective_preset": settings.effective_preset,
+    }
+
+
 def record_runner_report(args, tracker, report, component=None):
     """Use one detail-level meaning without changing snapshot/ownership collection."""
     if getattr(args, "metrics_level", 2) >= 2:

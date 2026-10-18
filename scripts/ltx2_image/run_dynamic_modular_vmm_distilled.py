@@ -201,7 +201,7 @@ def parse_optional_float(value: str | None) -> float | None:
     return float(value)
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, backend_reporting_fields
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
@@ -782,16 +782,19 @@ def main():
         "vmm_staging_buffer_gb": VMM_STAGING_BUFFER_GB,
         "vmm_windows_file_read_chunk_mb": VMM_WINDOWS_FILE_READ_CHUNK_MB,
         **DYNAMIC_OFFLOAD_SETTINGS.as_metrics(),
+        **backend_reporting_fields(ddo_backend, DYNAMIC_OFFLOAD_SETTINGS),
         "pre_vae_cleanup_repeats": PRE_VAE_CLEANUP_REPEATS,
         "events": [],
         "steps": [],
     }
 
-    if DYNAMIC_OFFLOAD_PRESET:
-        if REQUESTED_DYNAMIC_OFFLOAD_PRESET == "auto":
-            print(f"Using DDO preset: auto -> {DYNAMIC_OFFLOAD_PRESET}", flush=True)
-        else:
-            print(f"Using DDO preset: {DYNAMIC_OFFLOAD_PRESET}", flush=True)
+    print(
+        f"Using DDO backend: {ddo_backend.backend}; preset: "
+        f"{ddo_backend.requested_preset} -> {ddo_backend.effective_preset}; "
+        f"runtime: {DYNAMIC_OFFLOAD_EXECUTION_MODE}; "
+        f"base settings preset: {DYNAMIC_OFFLOAD_PRESET}",
+        flush=True,
+    )
     if DYNAMIC_OFFLOAD_PIN_CPU_MEMORY and not DYNAMIC_OFFLOAD_EFFECTIVE_PIN_CPU_MEMORY:
         print("  [dynamic-offload] disabling pinned CPU memory on WSL; set DDO_DISABLE_PIN_ON_WSL=0 to force it.", flush=True)
     text_encoder_route = (
@@ -812,7 +815,8 @@ def main():
         f"vmm_weight_budget_gb={VMM_RESIDENT_WEIGHT_BUDGET_GB:g} "
         f"vmm_staging_buffer_gb={VMM_STAGING_BUFFER_GB:g} "
         f"vmm_windows_file_read_chunk_mb={VMM_WINDOWS_FILE_READ_CHUNK_MB} "
-        f"preset={DYNAMIC_OFFLOAD_PRESET or 'none'}",
+        f"preset={ddo_backend.effective_preset} "
+        f"runtime={DYNAMIC_OFFLOAD_EXECUTION_MODE}",
         flush=True,
     )
 
