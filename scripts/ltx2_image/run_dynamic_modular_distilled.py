@@ -110,6 +110,7 @@ def parse_optional_float(value: str | None) -> float | None:
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -160,7 +161,9 @@ def parse_args():
     parser.add_argument("--pin-weight-budget-gb", type=float, default=None)
     parser.add_argument("--reset-dynamic-memory-after-run", action=argparse.BooleanOptionalAction, default=RESET_DYNAMIC_MEMORY_AFTER_RUN)
     parser.add_argument("--print-presets", action="store_true")
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser)
+    validate_lora_arguments(parser, args)
     return args
 
 
@@ -573,6 +576,7 @@ def main():
             **transformer_load_kwargs,
         )
         prepared_transformer = transformer_load.module
+        load_ltx_lora(prepared_transformer, args, run_metrics, record_event)
         prepared_dynamic_offload_hook = transformer_load.hook
         record_event(
             transformer_prepare_event_name("load_transformer", repeat_index),

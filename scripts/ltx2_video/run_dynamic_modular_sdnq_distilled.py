@@ -48,6 +48,7 @@ def sdnq_settings(args, device):
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -87,7 +88,9 @@ def parse_args(argv=None):
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser, argv)
+    validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
             not math.isfinite(args.frame_rate) or args.frame_rate <= 0 or not 1 <= args.steps <= 8):
@@ -328,6 +331,7 @@ def main():
         transformer = transformer_type.from_pretrained(
             transformer_source(args), subfolder="transformer", torch_dtype=dtype,
             low_cpu_mem_usage=True, device_map="cpu", local_files_only=args.local_files_only)
+        load_ltx_lora(transformer, args, metrics, tracker.record_event)
         backend = detect_quantized_backend_modules(transformer)
         if not backend.get("sdnq_module_count"):
             raise RuntimeError("The transformer did not load SDNQ modules; refusing a dense fallback.")

@@ -19,6 +19,7 @@ REVISION = "f5c712e93c52283cb101da26d4a4544c808666bf"
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -55,7 +56,9 @@ def parse_args(argv=None):
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser, argv)
+    validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
             not math.isfinite(args.frame_rate) or args.frame_rate <= 0 or not 1 <= args.steps <= 8):
@@ -287,6 +290,7 @@ def main():
             torch_dtype=dtype, low_cpu_mem_usage=True, local_files_only=args.local_files_only,
             apply_dynamic=False, dynamic_offload_config=settings.config if settings.enabled else None)
         transformer = loaded.module
+        load_ltx_lora(transformer, args, metrics, tracker.record_event)
         record_runner_report(args, tracker, loaded.metrics_snapshot(), "transformer_load")
         del loaded
         pipe = load_phase(stages["prepare"], ["vae", "audio_vae", "scheduler"])

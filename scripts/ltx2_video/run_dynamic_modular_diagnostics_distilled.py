@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
@@ -102,7 +103,9 @@ def parse_args(argv=None):
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=2)
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser, argv)
+    validate_lora_arguments(parser, args)
     args.runner_entrypoint = "diagnostics"
     if args.compile_triton_execution:
         if not (args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
@@ -646,6 +649,7 @@ def run(args):
         transformer_config = build_transformer_config(args, settings.config)
         loaded = load_transformer_for_phase(args, transformer_loader, dtype, transformer_config, settings.enabled)
         transformer = loaded.module
+        load_ltx_lora(transformer, args, metrics, tracker.record_event)
         report(loaded.metrics_snapshot(), "transformer_load")
         del loaded
         inspect("transformer_loaded", transformer)

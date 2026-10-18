@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments
 
 ROOT = Path(__file__).parents[1]
 RUNNERS = sorted(path for model in ("ltx2_image", "ltx2_video", "qwen_image_21")
@@ -23,6 +24,7 @@ def parser_body(path):
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "parse_args")
     namespace = dict(argparse=argparse, math=math, os=os, sys=sys, Path=Path, ROOT=ROOT,
                      parse_common_arguments=parse_common_arguments, __doc__="CPU parser contract",
+                     add_lora_arguments=add_lora_arguments, validate_lora_arguments=validate_lora_arguments,
                      parse_optional_float=lambda value: None if value in (None, "") else float(value))
     for node in tree.body:
         if isinstance(node, ast.Assign):

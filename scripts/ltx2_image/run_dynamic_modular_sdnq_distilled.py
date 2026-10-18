@@ -90,6 +90,7 @@ DEFAULT_NEGATIVE_PROMPT = (
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     parser = argparse.ArgumentParser(description="LTX 2.3 distilled modular SDNQ text-to-image DDO runner.")
@@ -159,7 +160,9 @@ def parse_args():
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser)
+    validate_lora_arguments(parser, args)
     return args
 
 
@@ -525,6 +528,7 @@ def main():
 
     event_t0 = time.time()
     transformer = LTX2ImageTransformer2DModel.from_pretrained(sdnq_model_path, **transformer_load_kwargs)
+    load_ltx_lora(transformer, args, run_metrics, record_event)
     record_event("load_sdnq_transformer", time.time() - event_t0, source=sdnq_model_path, kind=transformer_kind)
 
     active_adapters = []

@@ -66,6 +66,7 @@ NEGATIVE_PROMPT = ""
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -87,7 +88,9 @@ def parse_args():
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=SHOW_METRICS)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=SAVE_METRICS)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
+    add_lora_arguments(parser)
     args = parse_common_arguments(parser)
+    validate_lora_arguments(parser, args)
     return args
 
 
@@ -273,6 +276,7 @@ def main():
         apply_dynamic=False,
     )
     transformer = transformer_load.module
+    load_ltx_lora(transformer, args, run_metrics, record_event)
     del transformer_load
     record_event("load_transformer", time.time() - event_t0)
 
