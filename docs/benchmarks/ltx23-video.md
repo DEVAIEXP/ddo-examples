@@ -26,6 +26,11 @@ or a reused non-side-by-side observation also have no arrows.
 
 ## Windows — BF16
 
+A separate [two-step residual CPU source ownership validation](ltx23-video-details.md#residual-cpu-source-detachment)
+recovered checkpoint-related commit headroom with exact output equivalence.
+Its larger conditioned workload and experimental backing policy are not rows in
+the matched performance table below.
+
 | Scenario (details) | Transformer runtime | VAE route | Denoise (s) | Average (s/step) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | [Official leaf](ltx23-video-details.md#windows-leaf) (reference) | official leaf hooks | resident, temporal streaming | 392.91 | 49.11 | 452.33 | 4.72 | 41.34 |

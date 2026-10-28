@@ -266,6 +266,56 @@ transformer; 121 frames, stereo 48 kHz output. Native active ceilings are
 `24.625` GiB source storage and 512 MiB registration. This input/encoder
 scope differs from the primary WSL no-input-audio trio.
 
+## Residual CPU source detachment
+
+Selected Windows validation on 2026-10-28 used distilled BF16 LTX 2.3, a
+1920x1056 image with conditioning audio, 10.33 seconds at 24 fps, seed 2925624786
+and the first two scheduler steps of an eight-step schedule. Both complete
+transformer forwards contained 48 blocks; no third step or decode executed.
+This is separate from the 1280x704 overview benchmark. The transformer executed
+`vmm_fast_runtime` with an experimental execution-backing pressure DLL; this does
+not promote that artifact or change an installed preset. VAE execution was absent.
+
+The old weight-loading route and 1.5 GiB weight/staging budgets, 24.625 GiB
+source/registration ceilings and 4 MiB allocator cache were retained. The single
+loading intervention explicitly called the existing guarded
+`detach_auxiliary_cpu_sources(enabled=True, max_copy_bytes=16 * 1024**2)` after
+attachment and before the first forward. The model was exclusively owned and
+in evaluation mode. Native readiness, CPU source ownership, alias/layout and
+source provenance guards remained active. There was no compression or activation
+eviction. The runner's existing option is
+`--detach-transformer-auxiliary-cpu-sources`; this result does not enable it by
+default or authorize arbitrary experimental runner controls.
+
+The operation copied 7.88 MiB across 192 residual CPU groups and released their
+large checkpoint mapping owners. Within that operation, process private commit
+fell by 35.41 GiB. Full video/audio latents after scheduler step index one were
+finite and bitwise identical to the preserved accepted reference, with zero
+mismatched elements. Native/compute closure and scheduler restoration passed.
+
+Windows process private commit and system commit below are **sampled peaks**,
+in GiB, at 500 ms intervals. They are not RSS or local VRAM usage. System totals
+include unrelated processes. Headroom is the sampled minimum of system commit
+limit minus system commit. See [metric definitions](glossary.md).
+
+| Observation scope | Peak process private commit (GiB) | Peak system commit (GiB) | Minimum system commit headroom (GiB) |
+| --- | ---: | ---: | ---: |
+| Full observed capture including loading | 48.08 | 71.96 | 23.96 |
+| Two-step denoising interval | 42.07 | 59.18 | 36.74 |
+
+The transient loading peak precedes detachment and remains. Correctness-capture
+denoising time was 349.46 s, including final output readback, versus 352.25 s for
+the earlier reference. This is not a controlled speed comparison or performance
+acceptance. The demonstrated benefit is commit relief with selected exact-output
+equivalence; no full eight-step/decode, generic CUDA stability, other model,
+platform or installed-wheel acceptance is established.
+
+Original evidence remains archived locally under
+`storage-detach-two-step-enabled-4a110a9835f74117a631e804434657fa`, manifest
+`06e66a9c4a8f87d6287d392c9d94877d9b6229d2e57652295a2d48469266c472`.
+Reference: `execution-backing-two-step-numerical-enabled-35ad11099d7546e194864e11916f2dd9`.
+These identities are archival evidence, not files required by public users.
+
 ## Reproduce this workload
 
 Use the [runner guide](../user/ltx2-video.md) and
