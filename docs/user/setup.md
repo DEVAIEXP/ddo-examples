@@ -69,7 +69,7 @@ set PYTHONPATH or DDO_VMM_LIBRARY_PATH to development checkouts or old builds.
 ## 3. Install packages and model dependencies
 
 DDO and the allocator are installed from PyPI through `pyproject.toml`, pinned
-to the validated `0.1.0rc2` pair. CUDA Torch packages come from the PyTorch index.
+to the validated `0.1.0rc3` pair. CUDA Torch packages come from the PyTorch index.
 Stop if any command fails.
 
 ### Windows PowerShell

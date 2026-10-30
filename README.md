@@ -8,7 +8,7 @@ image, LTX 2.3 video/audio and Qwen Image 2.1.
 
 Start with the [user guide](docs/user/README.md) to install packages and choose a
 model runner. This path does not require a DDO source checkout or native compiler.
-Experimental packages `0.1.0rc2` are available on PyPI. Follow the package setup
+Experimental packages `0.1.0rc3` are available on PyPI. Follow the package setup
 guide to install DDO, the allocator and runner dependencies in one environment.
 
 ## Compare performance and memory
