@@ -1,5 +1,8 @@
 site_name: DDO examples
-site_description: Local review of model guides and measured comparisons
+site_description: Model guides and measured comparisons using DDO
+site_url: https://devaiexp.github.io/ddo-examples/
+repo_url: https://github.com/DEVAIEXP/ddo-examples
+edit_uri: ''
 docs_dir: docs
 site_dir: .internal/docs-preview/site
 dev_addr: 127.0.0.1:8000

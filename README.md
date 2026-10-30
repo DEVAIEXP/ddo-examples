@@ -6,6 +6,10 @@ image, LTX 2.3 video/audio and Qwen Image 2.1.
 
 ## Use the examples
 
+Read the [documentation website](https://devaiexp.github.io/ddo-examples/), including
+[setup](https://devaiexp.github.io/ddo-examples/docs/user/setup/) and
+[benchmarks](https://devaiexp.github.io/ddo-examples/docs/benchmarks/).
+
 Start with the [user guide](docs/user/README.md) to install packages and choose a
 model runner. This path does not require a DDO source checkout or native compiler.
 Experimental packages `0.1.0rc3` are available on PyPI. Follow the package setup
