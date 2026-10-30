@@ -27,6 +27,12 @@ def parse_common_arguments(parser, argv=None, *, purge_phases=("before_run", "af
     """
     from diffusers_dynamic_offloader import add_dynamic_offload_lifecycle_arguments
 
+    if "--memory-monitor" not in parser._option_string_actions:
+        parser.add_argument(
+            "--memory-monitor", choices=("rss", "full"), default="full",
+            help="RSS monitoring or full USS monitoring; omitted preserves the existing full monitor.",
+        )
+
     if "--purge-before-transformer" not in parser._option_string_actions:
         add_dynamic_offload_lifecycle_arguments(parser, phases=purge_phases)
     else:

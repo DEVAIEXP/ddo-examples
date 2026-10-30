@@ -122,6 +122,9 @@ class RunnerReporting:
 
     def __exit__(self, exc_type, error, traceback):
         if error is not None:
+            from .failure_reporting import report_memory_failure
+
+            report_memory_failure(error, self.metrics)
             self.metrics.update(
                 status="interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
                 error_type=type(error).__name__,

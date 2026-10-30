@@ -42,6 +42,7 @@ def parse_args(argv=None):
     parser.add_argument("--seed", type=int, default=43)
     parser.add_argument("--output-dir", default=str(ROOT / "outputs/ddo_modular_video"))
     parser.add_argument("--show-profile", action="store_true")
+    parser.add_argument("--memory-monitor", choices=("rss", "full"), default="rss")
     parser.add_argument("--stream-video-decode", action="store_true",
                         help="Use temporal GPU video streaming and separate audio VAE/vocoder stages.")
     parser.add_argument("--decode-device", choices=("cpu", "cuda:0"), default="cpu",
@@ -163,7 +164,7 @@ def main():
     settings = DynamicOffloadSettings.from_env(execution_device=device, offload_device="cpu",
                                               default_preset=args.ddo_preset, environ=runner_settings_environ(args))
     metrics = {"runner": Path(__file__).stem, "events": [], "steps": [], "requested_controls": vars(args).copy()}
-    tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor="rss")
+    tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     active = []
     pipe = None
     output_dir = Path(args.output_dir)

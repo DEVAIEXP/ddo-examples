@@ -218,6 +218,11 @@ resident VAE. This is a repeated workload, not a single-image comparison.
 
 ## Recommendations
 
+The local rc3 installed-wheel image checks on Linux and WSL are recorded
+[separately](ltx23-image-details.md#installed-rc3-functional-validation).
+They confirm exact output for their fixed platform recipes; they do not replace
+the benchmark rankings or establish a performance improvement.
+
 | Hardware / priority | Recommendation from these measurements |
 | --- | --- |
 | 8 GiB GPU, ample system RAM, one image | Compare `one_shot_fast` and `vmm_fast`. On Windows, `one_shot_fast` has shorter denoise time, while `vmm_fast` has the shortest tracked total in the shared-encoder comparison. On Linux, `vmm_fast` has both the shortest denoise time and tracked total. |

@@ -23,6 +23,8 @@ python -B scripts/ltx2_image/run_dynamic_modular_distilled.py --help
 
 ## Run the model
 
+### Linear DDO: `one_shot_fast`
+
 This linear recipe fixes the published image dimensions, steps and seed:
 
 ```powershell
@@ -33,6 +35,39 @@ Run from an elevated Windows terminal for standby purge. The real default cat
 prompt is used; downloads and a different environment can change elapsed time.
 For controlled performance comparisons, use the conditions in
 [image benchmarks](../benchmarks/ltx23-image.md), including encoder and VAE strategy.
+
+### Native VMM: `vmm/auto` on Windows
+
+Install the matching native allocator wheel from the [setup guide](setup.md).
+Run this command from the examples checkout in your activated environment:
+
+```powershell
+python -B scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py `
+  --ddo-backend vmm --ddo-preset auto --preset one_shot_fast `
+  --ddo-public-native-runtime `
+  --width 1280 --height 704 --steps 8 --seed 43 `
+  --guidance-scale 1 --guidance-rescale 0.7 --no-pag `
+  --vmm-resident-weight-budget-gb 4 `
+  --ddo-vmm-total-staging-gb 1.5 `
+  --ddo-vmm-source-cache-gb 24.625 `
+  --ddo-vmm-source-registered-gb 24.625 `
+  --ddo-vmm-page-mb 32 `
+  --purge-before-transformer `
+  --memory-monitor rss --metrics-level 2 `
+  --show-profile --show-metrics --save-metrics
+```
+
+This selects `vmm_fast_runtime` for the BF16 transformer. `--preset one_shot_fast`
+provides base settings; it does not switch this command to the linear runtime.
+The real default cat prompt is used, the text encoder uses official leaf/group
+offload, and the VAE remains resident. No native build is performed at inference.
+
+The weight arena is capped at 4 GiB; total staging is 1.5 GiB. Retained CPU
+source storage and CUDA registration each have a separate 24.625 GiB ceiling.
+These are the measured Windows recipe's capacities, not a total GPU-memory cap
+or universal model defaults. Activations and other components also need memory.
+For purge, use an elevated Windows terminal. For Linux/WSL capacities and staging
+semantics, see [runtime and preset selection](#runtime-and-preset-selection).
 
 ## Optional LoRA
 
@@ -49,32 +84,23 @@ Do not treat a short command with implicit capacities as the published native
 benchmark: active weight, staging and retained/registered source limits matter.
 `--text-encoder-native-vmm` independently selects the native encoder path.
 
-### Native VMM on Windows
-
-This runner defaults to `vmm/auto` using the public native route, BF16,
-1280×704, eight steps, seed 43, CFG 1/rescale 0.7, the real default prompt and
-no PAG. The text encoder uses leaf offload and the VAE remains resident.
-The following recipe keeps the measured memory limits explicit rather than
-making hardware-specific limits universal defaults:
-
-```powershell
-python -B scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py `
-  --vmm-resident-weight-budget-gb 4 `
-  --vmm-staging-buffer-gb 0.5 `
-  --ddo-vmm-source-cache-gb 24.625 `
-  --ddo-vmm-source-registered-gb 24.625 `
-  --purge-before-transformer `
-  --memory-monitor rss --metrics-level 2 `
-  --show-profile --show-metrics --save-metrics
-```
-
-Run from an elevated Windows terminal for purge. Staging totals 1.5 GiB in this
-native recipe. Purge and report controls remain optional. These capacities are
-not a WSL recipe; see platform-specific benchmark conditions. Use your selected
-environment's explicit Python if it is not activated.
+Purge and report controls remain optional. Use your selected environment's
+explicit Python if it is not activated.
 Selecting `--ddo-preset nvme_baseline` still selects the protected NVMe route;
 it does not enable the public native-fast path. Diagnostic adapter selection
 also remains explicit.
+
+For this image harness, prefer `--ddo-vmm-total-staging-gb` to state total
+capacity. The legacy `--vmm-staging-buffer-gb` describes each slot: the public
+native route multiplies it by three. Thus legacy `0.5` means 1.5 GiB total,
+while legacy `0.375` means 1.125 GiB total. Do not pass both controls.
+
+Selected installed rc3 image validation used **0.375 GiB total** staging on WSL,
+with weights 4 GiB, retained source cache 24.625 GiB and registration 0.5 GiB.
+Native Linux used **1.5 GiB total** staging and 24.625 GiB registration with
+the same weight/cache ceilings. These are separate fixed workloads, not portable
+defaults. See [installed-wheel validation conditions](../benchmarks/ltx23-image-details.md#installed-rc3-functional-validation)
+before reproducing or comparing them.
 
 ## Optional weight formats
 

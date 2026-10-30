@@ -24,6 +24,8 @@ python -B scripts/qwen_image_21/run_dynamic_modular.py --help
 
 ## Run the model
 
+### Linear DDO: one_shot_fast
+
 This base recipe fixes the 512-square comparison workload:
 
 ```powershell
@@ -33,6 +35,33 @@ python -B scripts/qwen_image_21/run_dynamic_modular.py --variant base --width 51
 It uses the default capybara prompt. Run elevated on Windows for standby purge;
 outside Windows purge is a no-op. Exact platform comparisons and native recipes
 are in [Qwen benchmarks](../benchmarks/qwen-image-21.md).
+
+### Native VMM: vmm/auto on Windows
+
+After installing the native allocator through the [setup guide](setup.md), run:
+
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular_vmm.py `
+  --ddo-backend vmm --ddo-preset auto `
+  --variant base --width 512 --height 512 --steps 20 --seed 42 `
+  --ddo-vmm-resident-weight-budget-gb 4 `
+  --ddo-vmm-total-staging-gb 0.625 `
+  --ddo-vmm-source-cache-gb 16 `
+  --ddo-vmm-source-registered-gb 16 `
+  --vae-resident --purge-before-transformer `
+  --memory-monitor rss --show-profile --show-metrics --save-metrics
+```
+
+This selects `vmm_fast_runtime`, using the same default capybara prompt, BF16,
+CFG 1 and enabled KV cache. The runner stages the text encoder with official
+Diffusers leaf offload; the command explicitly selects a resident, untiled VAE.
+The capacities match the recorded Windows native workload: 4 GiB of active
+weights, 640 MiB of total host staging and separate 16 GiB source-storage and
+CUDA-registration ceilings. These are separate budgets, not a total VRAM limit.
+
+Platform-specific conditions and the protected `vmm/nvme_baseline` comparison
+remain documented in [measurement details](../benchmarks/qwen-image-21-details.md).
+The SDNQ runner is a separate route and does not use this native recipe.
 
 Turbo uses its saved sampling schedule, not an arbitrary base step count.
 Do not substitute Turbo in a base benchmark.

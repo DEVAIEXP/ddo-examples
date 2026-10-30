@@ -13,6 +13,19 @@ Video/audio also needs compatible FFmpeg system shared libraries. On Ubuntu
 22.04, install the distribution's `ffmpeg` package. Package names differ on other
 distributions. WSL uses the Windows GPU driver, not a Linux GPU driver.
 
+On Windows, use an FFmpeg **shared** build and put its `bin` directory on PATH
+in the same terminal before starting an audio-conditioned runner. An executable-only
+FFmpeg installation is insufficient for TorchCodec: it needs the shared DLLs
+(including `avcodec`, `avformat` and `avutil`). For an existing shared installation:
+
+```powershell
+$env:PATH = 'C:\path\to\ffmpeg-shared\bin;' + $env:PATH
+```
+
+The runner and its bootstrap child inherit this PATH. Check audio decoding before
+loading the model; a TorchCodec library-loading error is a dependency failure,
+not a denoising result.
+
 ## 1. Clone the examples
 
 Clone only `ddo-examples` to use the runners. DDO and the allocator are installed

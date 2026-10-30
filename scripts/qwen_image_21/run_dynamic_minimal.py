@@ -70,7 +70,7 @@ def main():
         "events": [],
         "steps": [],
     }
-    tracker = RunTracker(device, metrics)
+    tracker = RunTracker(device, metrics, memory_monitor=args.memory_monitor)
     purge_for_runner(args, "before_run", preset=args.ddo_preset, record_event=tracker.record_event)
     phase = tracker.step_start("encode")
     text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(

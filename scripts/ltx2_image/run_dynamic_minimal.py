@@ -168,7 +168,8 @@ def main():
     SHOW_DENOISE_STEPS = args.show_denoise_steps
 
     run_metrics = {"events": [], "steps": []}
-    tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS)
+    tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS,
+                         memory_monitor=args.memory_monitor)
     record_event = tracker.record_event
 
     purge_for_runner(args, "before_run", preset=PRESET, record_event=record_event)

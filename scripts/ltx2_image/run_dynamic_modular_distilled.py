@@ -415,7 +415,8 @@ def main():
         flush=True,
     )
 
-    tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS)
+    tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS,
+                         memory_monitor=args.memory_monitor)
     record_event = tracker.record_event
     step_start = tracker.step_start
     step_end = tracker.step_end

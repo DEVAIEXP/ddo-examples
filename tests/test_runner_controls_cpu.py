@@ -19,6 +19,18 @@ RUNNERS = sorted(path for model in ("ltx2_image", "ltx2_video", "qwen_image_21")
                  for path in (ROOT / "scripts" / model).glob("run*.py"))
 
 
+@pytest.fixture(autouse=True)
+def forbid_cuda_initialization(monkeypatch):
+    """Keep optional TorchAO/Triton import probes inside the CPU test contract."""
+    import torch
+
+    def refuse_initialization(*args, **kwargs):
+        raise AssertionError("Parser/reporting CPU tests must not initialize CUDA")
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.cuda, "_lazy_init", refuse_initialization)
+
+
 @pytest.mark.parametrize("backend_name,preset", [
     ("vmm", "auto"), ("vmm", "nvme_baseline"), ("linear", "auto"),
 ])
@@ -72,6 +84,26 @@ def test_every_runner_accepts_the_same_explicit_lifecycle_switches(path, monkeyp
     assert args.purge_after_run is False
     assert args.purge_before_run is None
     assert getattr(args, "purge_after_text_encoder", None) is None
+
+
+@pytest.mark.parametrize("path", RUNNERS, ids=lambda path: str(path.relative_to(ROOT)))
+@pytest.mark.parametrize("mode", ("rss", "full"))
+def test_every_runner_accepts_and_forwards_memory_monitor(path, mode, monkeypatch):
+    function = parser_body(path)
+    monkeypatch.setattr("sys.argv", [str(path), "--memory-monitor", mode])
+    assert function().memory_monitor == mode
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    trackers = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name) and node.func.id == "RunTracker"]
+    for tracker in trackers:
+        value = next(keyword.value for keyword in tracker.keywords if keyword.arg == "memory_monitor")
+        assert isinstance(value, ast.Attribute) and value.attr == "memory_monitor"
+
+
+def test_shared_monitor_preserves_legacy_default_and_rejects_unknown_mode():
+    assert parse_common_arguments(argparse.ArgumentParser(), []).memory_monitor == "full"
+    with pytest.raises(SystemExit):
+        parse_common_arguments(argparse.ArgumentParser(), ["--memory-monitor", "unknown"])
 
 
 def test_aliases_preserve_destinations_defaults_and_units():

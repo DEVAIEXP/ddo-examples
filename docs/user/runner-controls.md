@@ -53,6 +53,10 @@ guarantee that native backing has returned to the driver.
 Supported display/save switches also accept their negative forms.
 RSS and USS are different memory measurements; callback intervals are not
 synchronized GPU timings. See [metric labels](../benchmarks/glossary.md).
+All listed LTX image/video and Qwen runners accept `--memory-monitor rss` and
+`--memory-monitor full` and pass the choice to the shared monitor. Defaults
+remain runner-specific to preserve existing recipes; select a mode explicitly
+when comparing measurements.
 
 Model guides list their additional controls. Contributors can consult
 [diagnostics and reporting](../developer/diagnostics.md) for timing semantics

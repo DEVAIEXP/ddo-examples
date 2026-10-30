@@ -229,6 +229,60 @@ generations, so the final image need not equal a single-generation seed-43 image
 The plan and pinned-weight cache are reused. The total covers both generations
 and final decode, not one image. No comparative repeated-preset ranking follows.
 
+## Installed rc3 functional validation
+
+The same local DDO/allocator rc3 Linux wheels completed separate native-Linux
+and WSL image checks without rebuilding. Both used installed packages, Python
+3.12.12, Torch 2.12.1+cu132 and Diffusers 0.41.0. The workload was the BF16
+checkpoint/revision above, 1280 x 704, eight steps, seed 43, the runner's real
+cat prompt, CFG 1/rescale 0.7 and no PAG. Each run included one generation,
+one transformer preparation and resident VAE decode. Transformer runtime was
+`vmm_fast_runtime`, requested through `vmm/auto` with base `one_shot_fast`;
+the text encoder used official group offload and VAE route was `none`.
+
+| Target | Weight capacity (GiB) | Total staging (GiB) | Source storage (GiB) | Source registration (GiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Native Linux | 4.00 | 1.50 | 24.63 | 24.63 |
+| WSL2 | 4.00 | 0.38 | 24.63 | 0.50 |
+
+The table rounds for display. Exact reproduction values are weights `4`,
+source cache `24.625` and pages `32` MiB on both platforms;
+`--ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-registered-gb 24.625` on
+native Linux, and `--ddo-vmm-total-staging-gb 0.375 --ddo-vmm-source-registered-gb 0.5`
+on WSL. Use `scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py`, local
+model files, `--ddo-public-native-runtime --ddo-backend vmm --ddo-preset auto`,
+`--preset one_shot_fast`, `--vmm-resident-weight-budget-gb 4`,
+`--ddo-vmm-source-cache-gb 24.625 --ddo-vmm-page-mb 32`, dimensions/steps/seed
+above, one pre-VAE cleanup and level-2 metrics. No compression, activation
+eviction, ETW, GPU timing or automatic execution-backing reclaim was enabled.
+Windows standby purge is a no-op on these targets. The controller allowed
+1,800 s with 10 s progress and 16 MiB per log stream, without retry or automatic
+termination. The [runner guide](../user/ltx2-image.md) explains total staging.
+
+| Target / observation | Denoise wall (s) | Runner tracked total (s) |
+| --- | ---: | ---: |
+| Native Linux rc3 | 14.65 | 33.26 |
+| Native Linux retained rc2 first | 13.99 | 32.49 |
+| Native Linux retained rc2 repeat | 12.98 | 27.41 |
+| WSL rc3 | 89.01 | 278.12 |
+| WSL retained rc2 | 97.44 | 271.72 |
+
+Each rc3 run exited 0 after eight steps and decode. Its PNG and decoded RGB
+matched the retained platform reference exactly. Available pre-close native
+failure and quarantine counters were zero; decode and cleanup returned.
+Final native counters, latent finiteness and final driver-memory release were
+not established by the unchanged runner. Native Linux emitted a preserved
+group-offload lazy-prefetch warning for unused vision-tower layers; this
+text-prompt check does not validate image-conditioned vision-tower execution.
+
+These single historical observations close selected functional checks, not
+statistical performance acceptance. Platform capacities, host/cache conditions
+and registration differ; do not use the table as a Linux-versus-WSL ranking or
+a causal speed comparison. Neither full video nor arbitrary models are covered.
+Rejected preparations and staging-mismatch captures were retained separately
+and are excluded from these accepted observations. Package availability and
+artifact delivery remain separate release gates.
+
 ## Reproduce this workload
 
 Use the [runner guide](../user/ltx2-image.md) and

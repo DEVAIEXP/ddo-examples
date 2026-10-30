@@ -474,7 +474,20 @@ def resolve_local_transformer_loader(blocks):
     return loader
 
 
-def run(args):
+def run(args, *, activation_capture=None, transformer_setup=None):
+    if transformer_setup is not None and activation_capture is None:
+        raise ValueError("Experimental transformer setup requires the explicit activation capture")
+    if activation_capture is not None:
+        incompatible = (
+            "diagnose_denoise", "diagnose_operators", "detach_transformer_auxiliary_cpu_sources",
+            "transformer_fp8_weight_only", "fp8_group_offload_control", "compile_fp8_linears",
+            "fp8_feed_forward_reuse", "compile_repeated_blocks", "compile_triton_execution",
+            "independent_qk_rope", "external_qk_rope_library", "fused_rms_modulation",
+            "fused_rotary_pair",
+        )
+        if args.ddo_backend != "vmm" or args.ddo_preset != "auto" or any(
+                getattr(args, name) for name in incompatible):
+            raise ValueError("Activation capture requires the explicit dense eager native recipe")
     import torch
     from diffusers import ModularPipelineBlocks
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
@@ -564,7 +577,12 @@ def run(args):
 
     def attach(module, name, group=False, config=None):
         component_config = {"config": config} if config is not None else {}
-        result = enable_offload(module, settings=settings, component=name,
+        if activation_capture is not None and name == "transformer":
+            if group or config is not None:
+                raise ValueError("Activation capture requires the dense native transformer route")
+            result = activation_capture.attach(module, settings=settings)
+        else:
+            result = enable_offload(module, settings=settings, component=name,
                                 route="diffusers_group_offload" if group else (
                                     "dynamic_offload" if args.ddo_backend == "vmm" else None),
                                 execution_device=device, offload_device="cpu",
@@ -752,6 +770,8 @@ def run(args):
                 metrics["regional_compile"]["normalization_execution_note"] = (
                     "Opaque norm counts are installed boundaries, not invocation counts; "
                     "attention with RoPE executes the explicitly selected fused Q/K normalization instead.")
+        if transformer_setup is not None:
+            transformer_setup(transformer)
         result = attach(transformer, "transformer", group=args.fp8_group_offload_control,
                         config=transformer_config if args.transformer_fp8_weight_only and not args.fp8_group_offload_control else None)
         with result.cleanup_on_error():
@@ -762,7 +782,25 @@ def run(args):
             purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
             start = tracker.step_start("denoise")
             denoise_context_report = metrics.setdefault("denoise_execution_context_executed", {})
-            if args.diagnose_denoise:
+            if activation_capture is not None:
+                if len(active_results) != 1 or active_results[0][1] is not result:
+                    raise RuntimeError("Unexpected live component at activation capture boundary")
+                outcome = activation_capture.run_to_boundary(
+                    lambda: invoke_stage(current_pipe, payload, device,
+                        retain={"latents", "audio_latents"},
+                        execution_mode=denoise_execution_mode(args),
+                        execution_report=denoise_context_report),
+                    transformer.transformer_blocks[0], "transformer_blocks.0")
+                tracker.step_end("denoise", start)
+                activation_capture.close()
+                report(activation_capture.metrics_snapshot(), "transformer_activation_capture")
+                active_results.clear()
+                current_pipe.unload_components(list(current_pipe.components))
+                current_pipe = None
+                metrics.update(status="planned_stop", activation_capture=outcome,
+                               decode_executed=False)
+                return metrics
+            elif args.diagnose_denoise:
                 with result.execution_timer(enabled=True, native_units=True) as execution_timer, result.allocation_diagnostics(enabled=True) as allocation_diagnostics, result.operator_diagnostics(enabled=args.diagnose_operators, module_path=args.diagnose_operator_module, output_dir=output_dir / "operator_traces") as operator_diagnostics, result.metrics_journal(output_dir / "metrics" / "denoise_snapshots", enabled=True) as metrics_journal:
                     metrics_journal.record()
                     def observe_step(index):
@@ -903,13 +941,16 @@ def run(args):
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics["status"], metrics["error"] = "failed", repr(error)
+        from scripts.helpers.failure_reporting import report_memory_failure
+        report_memory_failure(error, metrics)
         # The error context retains failed native ownership when retirement is unsafe.
         for name, result in active_results:
             with result.cleanup_on_error():
                 raise error
         raise
     finally:
-        tracker.monitor.stop()
+        from scripts.helpers.failure_reporting import stop_monitor_preserving_error
+        stop_monitor_preserving_error(tracker.monitor, metrics)
         if fp8_chunk_handle is not None:
             metrics["fp8_feed_forward_reuse"].update(fp8_chunk_handle.snapshot())
         if "execution_ops" in locals():
