@@ -4,6 +4,12 @@ Measured model comparisons, grouped by platform. Each model's main page contains
 tables and hardware recommendations; scenario names link to their configuration,
 measurement scope and comparison limits.
 
+For a short method / latency / peak-memory comparison, start with the
+[at-a-glance summary](summary.md#at-a-glance-windows-bf16). Primary model pages
+then show a separate table for each phase and finish each platform set with the
+measured pipeline total. Choose a component strategy from its own phase table;
+do not combine the fastest rows into an unmeasured pipeline result.
+
 | Model | Main comparison | Measurement details |
 | --- | --- | --- |
 | LTX 2.3 image | [Results and recommendations](ltx23-image.md) | [Scenario details](ltx23-image-details.md) |

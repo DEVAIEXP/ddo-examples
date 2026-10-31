@@ -4,6 +4,13 @@ Model-specific Modular Diffusers runners and measured comparisons using
 [DDO](https://github.com/DEVAIEXP/diffusers-dynamic-offloader), covering LTX 2.3
 image, LTX 2.3 video/audio and Qwen Image 2.1.
 
+DDO manages weight loading and offloading while Diffusers/backend code computes
+the model. The **linear** route uses PyTorch-backed offloading; the optional
+**native VMM** route uses CUDA Virtual Memory Management to keep pointer
+addresses stable while reusing bounded physical GPU backing safely. VMM is not
+activation compression or a guarantee of local-VRAM placement. See the
+[library overview](https://devaiexp.github.io/diffusers-dynamic-offloader/).
+
 ## Use the examples
 
 Read the [documentation website](https://devaiexp.github.io/ddo-examples/), including
@@ -17,9 +24,37 @@ guide to install DDO, the allocator and runner dependencies in one environment.
 
 ## Compare performance and memory
 
-See [benchmarks](docs/benchmarks/README.md) for model-specific results, memory
-tradeoffs and recommendations. Conditions and platform boundaries accompany each
-comparison; no arbitrary-model or all-preset speedup is promised.
+Start with this existing **Windows LTX 2.3 video** comparison: BF16, 1280×704,
+5 seconds/121 frames at 24 fps, 8 steps, seed 43, RTX 3060 Ti 8 GiB and 64 GiB
+system RAM. All three use a shared Diffusers leaf text encoder and resident
+temporal VAE. The method is the transformer route. Times are seconds; memory
+peaks are sampled absolute driver GPU usage and process RSS in GiB.
+
+| Transformer method | Denoise (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Diffusers streamed leaf | 392.91 | 452.33 | 4.72 | 41.34 |
+| DDO linear (`one_shot_fast`) | 262.22 | 336.44 | 4.72 | 47.87 |
+| DDO native VMM (`vmm_fast`) | 207.40 | 277.09 | 5.21 | 32.65 |
+
+Tracked total excludes command startup and downloads. These single observations
+compare configured pipelines, not the isolated effect of the allocator.
+
+| Workload | What to compare | Full tables and conditions |
+| --- | --- | --- |
+| LTX video | Denoise, decoder latency and memory; native is fastest in this primary five-second set. | [Video benchmarks](docs/benchmarks/ltx23-video.md) |
+| LTX image | Linear has shorter Windows denoise; native has shorter tracked total. | [Image benchmarks](docs/benchmarks/ltx23-image.md) |
+| Qwen Image 2.1 | Compare resolution, encoder/VAE routes and observation sessions before ranking methods. | [Qwen benchmarks](docs/benchmarks/qwen-image-21.md) |
+
+Each model page separates **phase tables** and finishes each primary platform
+set with a **pipeline-total table**. Phases can use different offload methods;
+Diffusers leaf VAE may reduce decode GPU peaks at extra latency. No single method
+wins every phase or memory metric. Read the [summary](docs/benchmarks/summary.md),
+[hardware](docs/benchmarks/hardware.md) and [metric definitions](docs/benchmarks/glossary.md).
+Native Linux and WSL results stay in separate groups. These are experimental
+prereleases; further model architectures and hardware need validation.
+
+On the website, top menus select pages; the left contents list selects sections
+of the current page.
 
 ## Develop or contribute
 

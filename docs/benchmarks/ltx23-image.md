@@ -26,6 +26,10 @@ or a reused non-side-by-side observation also have no arrows.
 
 ## Windows — BF16
 
+Phase-table rows identify the complete pipeline by its transformer route.
+The shared leaf encoder and resident VAE keep their own implementations; a row
+labeled `vmm_fast` does not imply native VMM execution in every phase.
+
 | Scenario (details) | Transformer runtime | VAE route | Denoise (s) | Average (s/step) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | [Official leaf](ltx23-image-details.md#windows-leaf) (reference) | official leaf hooks | resident | 39.03 | 4.88 | 69.97 | 7.15 | 28.77 |
@@ -40,28 +44,59 @@ The encoder phase includes load/encode/cleanup; connectors are inside the
 **generate aggregate**, which also includes transformer setup and denoise.
 Do not add this aggregate to the denoise column above.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf](ltx23-image-details.md#windows-leaf) | Text encoder phase (load/encode/cleanup) | 21.15 | 4.79 | 25.90 |
-| [Official leaf](ltx23-image-details.md#windows-leaf) | Generate aggregate (connectors/setup/denoise) | 45.06 | 7.15 | 28.77 |
-| [Official leaf](ltx23-image-details.md#windows-leaf) | VAE load | 0.98 | 2.39 | 5.59 |
-| [Official leaf](ltx23-image-details.md#windows-leaf) | VAE decode | 0.32 | 2.80 | 4.39 |
-| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | Text encoder phase (load/encode/cleanup) | 21.00 | 4.79 | 25.90 |
-| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | Generate aggregate (connectors/setup/denoise) | 30.53 | 7.43 | 27.12 |
-| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | VAE load | 1.16 | 2.48 | 23.47 |
-| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | VAE decode | 0.30 | 2.80 | 22.17 |
-| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | Text encoder phase (load/encode/cleanup) | 21.33 | 4.79 | 25.90 |
-| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | Generate aggregate (connectors/setup/denoise) | 45.04 | 7.18 | 28.20 |
-| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | VAE load | 0.98 | 2.49 | 5.02 |
-| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | VAE decode | 0.31 | 2.80 | 3.80 |
-| [`vmm_fast`](ltx23-image-details.md#windows-native) | Text encoder phase (load/encode/cleanup) | 21.70 | 4.85 | 25.91 |
-| [`vmm_fast`](ltx23-image-details.md#windows-native) | Generate aggregate (connectors/setup/denoise) | 23.54 | 7.27 | 29.53 |
-| [`vmm_fast`](ltx23-image-details.md#windows-native) | VAE load | 1.14 | 3.44 | 5.12 |
-| [`vmm_fast`](ltx23-image-details.md#windows-native) | VAE decode | 0.39 | 3.44 | 3.81 |
-| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | Text encoder phase (load/encode/cleanup) | 21.44 | 4.79 | 26.02 |
-| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | Generate aggregate (connectors/setup/denoise) | 37.33 | 7.24 | 8.28 |
-| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | VAE load | 1.03 | 2.48 | 7.11 |
-| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | VAE decode | 0.31 | 2.80 | 5.81 |
+#### Text encoder phase (load/encode/cleanup)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#windows-leaf) | 21.15 | 4.79 | 25.90 |
+| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | 21.00 | 4.79 | 25.90 |
+| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | 21.33 | 4.79 | 25.90 |
+| [`vmm_fast`](ltx23-image-details.md#windows-native) | 21.70 | 4.85 | 25.91 |
+| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | 21.44 | 4.79 | 26.02 |
+
+#### Generate aggregate (connectors/setup/denoise)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#windows-leaf) | 45.06 | 7.15 | 28.77 |
+| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | 30.53 | 7.43 | 27.12 |
+| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | 45.04 | 7.18 | 28.20 |
+| [`vmm_fast`](ltx23-image-details.md#windows-native) | 23.54 | 7.27 | 29.53 |
+| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | 37.33 | 7.24 | 8.28 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#windows-leaf) | 0.98 | 2.39 | 5.59 |
+| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | 1.16 | 2.48 | 23.47 |
+| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | 0.98 | 2.49 | 5.02 |
+| [`vmm_fast`](ltx23-image-details.md#windows-native) | 1.14 | 3.44 | 5.12 |
+| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | 1.03 | 2.48 | 7.11 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#windows-leaf) | 0.32 | 2.80 | 4.39 |
+| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | 0.30 | 2.80 | 22.17 |
+| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | 0.31 | 2.80 | 3.80 |
+| [`vmm_fast`](ltx23-image-details.md#windows-native) | 0.39 | 3.44 | 3.81 |
+| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | 0.31 | 2.80 | 5.81 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#windows-leaf) (reference) | official leaf hooks | resident | 69.97 | 7.15 | 28.77 |
+| [`one_shot_fast`](ltx23-image-details.md#windows-linear) | linear_runtime | resident | 54.33 | 7.43 | 27.12 |
+| [`low_ram_safe`](ltx23-image-details.md#windows-low-ram) | linear_runtime | resident | 69.98 | 7.18 | 28.20 |
+| [`vmm_fast`](ltx23-image-details.md#windows-native) | vmm_fast_runtime | resident | 48.73 | 7.27 | 29.53 |
+| [`nvme_baseline`](ltx23-image-details.md#windows-nvme) | vmm_runtime | resident | 60.50 | 7.24 | 26.02 |
 
 ## Linux — BF16
 
@@ -81,24 +116,54 @@ The encoder phase includes load/encode/cleanup; connectors are inside the
 **generate aggregate**, which also includes transformer setup and denoise.
 Do not add this aggregate to the denoise column above.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf](ltx23-image-details.md#linux-leaf) | Text encoder phase (load/encode/cleanup) | 11.37 | 4.55 | 25.96 |
-| [Official leaf](ltx23-image-details.md#linux-leaf) | Generate aggregate (connectors/setup/denoise) | 32.58 | 6.93 | 28.61 |
-| [Official leaf](ltx23-image-details.md#linux-leaf) | VAE load | 0.83 | 2.38 | 29.79 |
-| [Official leaf](ltx23-image-details.md#linux-leaf) | VAE decode | 0.34 | 2.64 | 28.68 |
-| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | Text encoder phase (load/encode/cleanup) | 11.40 | 4.38 | 26.03 |
-| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | Generate aggregate (connectors/setup/denoise) | 30.54 | 7.06 | 26.97 |
-| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | VAE load | 0.67 | 2.19 | 23.34 |
-| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | VAE decode | 0.33 | 2.51 | 22.13 |
-| [`vmm_fast`](ltx23-image-details.md#linux-native) | Text encoder phase (load/encode/cleanup) | 10.95 | 4.63 | 25.94 |
-| [`vmm_fast`](ltx23-image-details.md#linux-native) | Generate aggregate (connectors/setup/denoise) | 16.20 | 6.90 | 29.48 |
-| [`vmm_fast`](ltx23-image-details.md#linux-native) | VAE load | 0.26 | 3.21 | 4.94 |
-| [`vmm_fast`](ltx23-image-details.md#linux-native) | VAE decode | 0.26 | 3.21 | 3.80 |
-| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | Text encoder phase (load/encode/cleanup) | 11.64 | 4.51 | 26.04 |
-| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | Generate aggregate (connectors/setup/denoise) | 141.70 | 6.89 | 30.31 |
-| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | VAE load | 0.70 | 2.24 | 7.06 |
-| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | VAE decode | 0.33 | 2.61 | 5.90 |
+#### Text encoder phase (load/encode/cleanup)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#linux-leaf) | 11.37 | 4.55 | 25.96 |
+| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | 11.40 | 4.38 | 26.03 |
+| [`vmm_fast`](ltx23-image-details.md#linux-native) | 10.95 | 4.63 | 25.94 |
+| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | 11.64 | 4.51 | 26.04 |
+
+#### Generate aggregate (connectors/setup/denoise)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#linux-leaf) | 32.58 | 6.93 | 28.61 |
+| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | 30.54 | 7.06 | 26.97 |
+| [`vmm_fast`](ltx23-image-details.md#linux-native) | 16.20 | 6.90 | 29.48 |
+| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | 141.70 | 6.89 | 30.31 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#linux-leaf) | 0.83 | 2.38 | 29.79 |
+| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | 0.67 | 2.19 | 23.34 |
+| [`vmm_fast`](ltx23-image-details.md#linux-native) | 0.26 | 3.21 | 4.94 |
+| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | 0.70 | 2.24 | 7.06 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#linux-leaf) | 0.34 | 2.64 | 28.68 |
+| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | 0.33 | 2.51 | 22.13 |
+| [`vmm_fast`](ltx23-image-details.md#linux-native) | 0.26 | 3.21 | 3.80 |
+| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | 0.33 | 2.61 | 5.90 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf](ltx23-image-details.md#linux-leaf) (reference) | official leaf hooks | resident | 45.55 | 6.93 | 29.79 |
+| [`one_shot_fast`](ltx23-image-details.md#linux-linear) | linear_runtime | resident | 43.29 | 7.06 | 26.97 |
+| [`vmm_fast`](ltx23-image-details.md#linux-native) | vmm_fast_runtime | resident | 28.00 | 6.90 | 29.48 |
+| [`nvme_baseline`](ltx23-image-details.md#linux-nvme) | vmm_runtime | resident | 154.75 | 6.89 | 30.31 |
 
 ## WSL — BF16
 
@@ -117,20 +182,49 @@ The encoder phase includes load/encode/cleanup; connectors are inside the
 **generate aggregate**, which also includes transformer setup and denoise.
 Do not add this aggregate to the denoise column above.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | Text encoder phase (load/encode/cleanup) | 139.13 | 4.85 | 38.53 |
-| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | Generate aggregate (connectors/setup/denoise) | 287.29 | 7.29 | 32.11 |
-| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | VAE load | 7.36 | 2.44 | 7.00 |
-| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | VAE decode | 0.93 | 2.70 | 5.69 |
-| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | Text encoder phase (load/encode/cleanup) | 134.60 | 4.85 | 38.53 |
-| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | Generate aggregate (connectors/setup/denoise) | 192.92 | 7.23 | 30.10 |
-| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | VAE load | 6.85 | 2.44 | 6.99 |
-| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | VAE decode | 0.63 | 2.70 | 5.69 |
-| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | Text encoder phase (load/encode/cleanup) | 135.09 | 4.70 | 38.53 |
-| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | Generate aggregate (connectors/setup/denoise) | 125.32 | 7.17 | 30.29 |
-| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | VAE load | 7.48 | 2.46 | 7.00 |
-| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | VAE decode | 0.62 | 2.78 | 5.70 |
+#### Text encoder phase (load/encode/cleanup)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | 139.13 | 4.85 | 38.53 |
+| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | 134.60 | 4.85 | 38.53 |
+| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | 135.09 | 4.70 | 38.53 |
+
+#### Generate aggregate (connectors/setup/denoise)
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | 287.29 | 7.29 | 32.11 |
+| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | 192.92 | 7.23 | 30.10 |
+| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | 125.32 | 7.17 | 30.29 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | 7.36 | 2.44 | 7.00 |
+| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | 6.85 | 2.44 | 6.99 |
+| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | 7.48 | 2.46 | 7.00 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) | 0.93 | 2.70 | 5.69 |
+| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | 0.63 | 2.70 | 5.69 |
+| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | 0.62 | 2.78 | 5.70 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](ltx23-image-details.md#wsl-leaf) (reference) | official leaf hooks | resident | 435.10 | 7.29 | 38.53 |
+| [`wsl_compat` (3 GiB override)](ltx23-image-details.md#wsl-linear) | linear_runtime | resident | 335.39 | 7.23 | 38.53 |
+| [`vmm_fast` (bounded)](ltx23-image-details.md#wsl-native) | vmm_fast_runtime | resident | 268.93 | 7.17 | 38.53 |
 
 ## VAE strategies — separate native-encoder workload
 

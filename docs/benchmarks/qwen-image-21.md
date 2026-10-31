@@ -26,6 +26,10 @@ or a reused non-side-by-side observation also have no arrows.
 
 ## Windows — BF16
 
+Phase-table rows identify the complete pipeline by its transformer route.
+Encoder and VAE strategies remain those stated for each platform; a row labeled
+`vmm_fast` does not imply native VMM execution in every phase.
+
 The native row is a reused official-package observation, not a repeat alongside
 the other routes.
 
@@ -42,53 +46,109 @@ the other routes.
 These are selected separately monitored phases, not an additive decomposition
 of the tracked total. Cleanup, saving and other unlisted setup remain in the total.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Text encoder load | 0.96 | 1.03 | 0.84 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Text encoder attachment | 0.04 | 1.03 | 0.88 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Text encode | 9.59 | 2.28 | 18.93 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Text encoder cleanup | 0.63 | 2.28 | 18.97 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Transformer load | 0.13 | 1.10 | 3.67 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Transformer attachment | 0.03 | 1.10 | 3.67 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | Denoise/readback | 41.28 | 1.58 | 16.99 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | VAE load | 0.98 | 1.10 | 5.55 |
-| [Official leaf](qwen-image-21-details.md#windows-leaf) | VAE decode | 0.47 | 3.68 | 4.47 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Text encoder load | 0.97 | 1.03 | 0.88 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Text encoder attachment | 0.04 | 1.03 | 0.88 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Text encode | 9.91 | 2.28 | 18.93 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Text encoder cleanup | 0.61 | 2.28 | 18.97 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Transformer load | 0.10 | 1.10 | 3.66 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Transformer attachment | 6.66 | 6.00 | 21.58 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | Denoise/readback | 17.94 | 6.69 | 13.80 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | VAE load | 0.96 | 1.17 | 15.62 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | VAE decode | 0.49 | 3.68 | 14.54 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Text encoder load | 0.93 | 1.03 | 0.88 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Text encoder attachment | 0.04 | 1.03 | 0.88 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Text encode | 9.58 | 2.28 | 18.91 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Text encoder cleanup | 0.59 | 2.28 | 18.97 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Transformer load | 0.11 | 1.10 | 3.66 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Transformer attachment | 2.38 | 3.94 | 6.43 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | Denoise/readback | 36.86 | 4.36 | 16.99 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | VAE load | 0.95 | 1.34 | 5.61 |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | VAE decode | 0.44 | 3.68 | 4.47 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Text encoder load | 0.89 | 1.03 | 0.87 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Text encoder attachment | 0.03 | 1.03 | 0.87 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Text encode | 9.58 | 3.40 | 18.93 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Text encoder cleanup | 0.60 | 2.24 | 18.97 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Transformer load | 0.17 | 2.24 | 3.66 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Transformer attachment | 1.42 | 2.24 | 4.30 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | Denoise/readback | 17.67 | 6.12 | 17.69 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | VAE load | 1.17 | 2.24 | 5.56 |
-| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | VAE decode | 0.47 | 3.90 | 4.48 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Text encoder load | 0.95 | 1.03 | 0.88 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Text encoder attachment | 0.04 | 1.03 | 0.88 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Text encode | 9.69 | 2.28 | 18.93 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Text encoder cleanup | 0.85 | 2.28 | 18.97 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Transformer load | 0.17 | 1.10 | 3.67 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Transformer attachment | 1.30 | 1.50 | 5.89 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | Denoise/readback | 38.08 | 5.23 | 6.00 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | VAE load | 0.97 | 1.15 | 7.54 |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | VAE decode | 0.47 | 3.68 | 6.48 |
+#### Text encoder load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.96 | 1.03 | 0.84 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.97 | 1.03 | 0.88 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.93 | 1.03 | 0.88 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 0.89 | 1.03 | 0.87 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.95 | 1.03 | 0.88 |
+
+#### Text encoder attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.04 | 1.03 | 0.88 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.04 | 1.03 | 0.88 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.04 | 1.03 | 0.88 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 0.03 | 1.03 | 0.87 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.04 | 1.03 | 0.88 |
+
+#### Text encode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 9.59 | 2.28 | 18.93 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 9.91 | 2.28 | 18.93 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 9.58 | 2.28 | 18.91 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 9.58 | 3.40 | 18.93 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 9.69 | 2.28 | 18.93 |
+
+#### Text encoder cleanup
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.63 | 2.28 | 18.97 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.61 | 2.28 | 18.97 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.59 | 2.28 | 18.97 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 0.60 | 2.24 | 18.97 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.85 | 2.28 | 18.97 |
+
+#### Transformer load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.13 | 1.10 | 3.67 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.10 | 1.10 | 3.66 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.11 | 1.10 | 3.66 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 0.17 | 2.24 | 3.66 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.17 | 1.10 | 3.67 |
+
+#### Transformer attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.03 | 1.10 | 3.67 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 6.66 | 6.00 | 21.58 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 2.38 | 3.94 | 6.43 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 1.42 | 2.24 | 4.30 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 1.30 | 1.50 | 5.89 |
+
+#### Denoise/readback
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 41.28 | 1.58 | 16.99 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 17.94 | 6.69 | 13.80 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 36.86 | 4.36 | 16.99 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 17.67 | 6.12 | 17.69 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 38.08 | 5.23 | 6.00 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.98 | 1.10 | 5.55 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.96 | 1.17 | 15.62 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.95 | 1.34 | 5.61 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 1.17 | 2.24 | 5.56 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.97 | 1.15 | 7.54 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) | 0.47 | 3.68 | 4.47 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | 0.49 | 3.68 | 14.54 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | 0.44 | 3.68 | 4.47 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | 0.47 | 3.90 | 4.48 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | 0.47 | 3.68 | 6.48 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#windows-leaf) (reference) | official leaf hooks | resident | 57.50 | 3.68 | 18.97 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-linear) | linear_runtime | resident | 41.36 | 6.69 | 21.58 |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-low-ram) | linear_runtime | resident | 55.24 | 4.36 | 18.97 |
+| [`vmm_fast` (reused observation)](qwen-image-21-details.md#windows-native) | vmm_fast_runtime | resident | 36.64 | 6.12 | 18.97 |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-nvme) | vmm_runtime | resident | 56.32 | 5.23 | 18.97 |
 
 ## Linux — BF16
 
@@ -107,44 +167,99 @@ it is not a controlled allocator-only A/B.
 These are selected separately monitored phases, not an additive decomposition
 of the tracked total. Cleanup, saving and other unlisted setup remain in the total.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Text encoder load | 0.90 | 1.09 | 0.95 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Text encoder attachment | 0.02 | 1.09 | 0.98 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Text encode | 5.06 | 2.34 | 18.84 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Text encoder cleanup | 0.60 | 2.33 | 18.88 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Transformer load | 0.10 | 1.15 | 3.57 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Transformer attachment | 0.01 | 1.15 | 3.57 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | Denoise/readback | 35.61 | 1.57 | 16.92 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | VAE load | 0.43 | 1.47 | 5.40 |
-| [Official leaf](qwen-image-21-details.md#linux-leaf) | VAE decode | 0.35 | 3.68 | 4.34 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Text encoder load | 0.74 | 1.01 | 0.95 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Text encoder attachment | 0.02 | 1.01 | 0.98 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Text encode | 3.42 | 2.27 | 18.87 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Text encoder cleanup | 0.59 | 2.27 | 18.88 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Transformer load | 0.04 | 1.08 | 3.55 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Transformer attachment | 7.15 | 5.68 | 21.38 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | Denoise/readback | 18.11 | 6.09 | 14.24 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | VAE load | 0.28 | 1.15 | 15.53 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | VAE decode | 0.36 | 3.74 | 14.91 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Text encoder load | 0.65 | 0.99 | 0.95 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Text encoder attachment | 0.02 | 0.99 | 0.98 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Text encode | 3.44 | 3.37 | 18.84 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Text encoder cleanup | 0.56 | 2.21 | 18.88 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Transformer load | 0.05 | 2.21 | 3.54 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Transformer attachment | 0.60 | 2.21 | 4.20 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | Denoise/readback | 13.03 | 6.12 | 17.63 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | VAE load | 0.27 | 2.21 | 4.95 |
-| [`vmm_fast`](qwen-image-21-details.md#linux-native) | VAE decode | 0.38 | 4.24 | 4.22 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Text encoder load | 0.91 | 0.73 | 1.04 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Text encoder attachment | 0.02 | 0.73 | 1.07 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Text encode | 5.01 | 1.98 | 18.93 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Text encoder cleanup | 0.56 | 1.99 | 18.96 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Transformer load | 0.14 | 0.80 | 3.65 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Transformer attachment | 1.25 | 1.22 | 4.86 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | Denoise/readback | 179.00 | 5.33 | 18.03 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | VAE load | 0.43 | 1.49 | 6.45 |
-| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | VAE decode | 0.45 | 3.73 | 5.44 |
+#### Text encoder load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.90 | 1.09 | 0.95 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.74 | 1.01 | 0.95 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.65 | 0.99 | 0.95 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.91 | 0.73 | 1.04 |
+
+#### Text encoder attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.02 | 1.09 | 0.98 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.02 | 1.01 | 0.98 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.02 | 0.99 | 0.98 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.02 | 0.73 | 1.07 |
+
+#### Text encode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 5.06 | 2.34 | 18.84 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 3.42 | 2.27 | 18.87 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 3.44 | 3.37 | 18.84 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 5.01 | 1.98 | 18.93 |
+
+#### Text encoder cleanup
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.60 | 2.33 | 18.88 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.59 | 2.27 | 18.88 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.56 | 2.21 | 18.88 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.56 | 1.99 | 18.96 |
+
+#### Transformer load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.10 | 1.15 | 3.57 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.04 | 1.08 | 3.55 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.05 | 2.21 | 3.54 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.14 | 0.80 | 3.65 |
+
+#### Transformer attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.01 | 1.15 | 3.57 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 7.15 | 5.68 | 21.38 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.60 | 2.21 | 4.20 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 1.25 | 1.22 | 4.86 |
+
+#### Denoise/readback
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 35.61 | 1.57 | 16.92 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 18.11 | 6.09 | 14.24 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 13.03 | 6.12 | 17.63 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 179.00 | 5.33 | 18.03 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.43 | 1.47 | 5.40 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.28 | 1.15 | 15.53 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.27 | 2.21 | 4.95 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.43 | 1.49 | 6.45 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) | 0.35 | 3.68 | 4.34 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | 0.36 | 3.74 | 14.91 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | 0.38 | 4.24 | 4.22 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | 0.45 | 3.73 | 5.44 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf](qwen-image-21-details.md#linux-leaf) (reference) | official leaf hooks | resident | 43.91 | 3.68 | 18.88 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-linear) | linear_runtime | resident | 31.24 | 6.09 | 21.38 |
+| [`vmm_fast`](qwen-image-21-details.md#linux-native) | vmm_fast_runtime | resident | 20.77 | 6.12 | 18.88 |
+| [`nvme_baseline`](qwen-image-21-details.md#linux-nvme) | vmm_runtime | resident | 188.66 | 5.33 | 18.96 |
 
 ## WSL — BF16
 
@@ -163,44 +278,99 @@ native uses bounded registration. These are not Windows/Linux parity claims.
 These are selected separately monitored phases, not an additive decomposition
 of the tracked total. Cleanup, saving and other unlisted setup remain in the total.
 
-| Scenario (details) | Phase | Wall (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | --- | ---: | ---: | ---: |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Text encoder load | 1.44 | 1.04 | 0.94 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Text encoder attachment | 0.02 | 1.04 | 0.94 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Text encode | 89.40 | 3.42 | 22.34 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Text encoder cleanup | 1.44 | 3.42 | 20.35 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Transformer load | 0.24 | 2.24 | 2.04 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Transformer attachment | 0.01 | 2.24 | 2.05 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | Denoise/readback | 265.68 | 2.26 | 20.58 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | VAE load | 3.47 | 2.24 | 3.78 |
-| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | VAE decode | 1.15 | 2.95 | 3.09 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Text encoder load | 1.45 | 1.04 | 0.94 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Text encoder attachment | 0.01 | 1.04 | 0.94 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Text encode | 86.47 | 3.42 | 22.33 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Text encoder cleanup | 1.43 | 3.42 | 20.35 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Transformer load | 0.25 | 2.24 | 2.04 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Transformer attachment | 14.25 | 3.99 | 4.90 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | Denoise/readback | 83.66 | 4.28 | 15.30 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | VAE load | 3.05 | 2.24 | 3.78 |
-| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | VAE decode | 1.13 | 2.95 | 3.03 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Text encoder load | 1.67 | 1.04 | 0.94 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Text encoder attachment | 0.02 | 1.04 | 0.94 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Text encode | 87.06 | 3.40 | 22.33 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Text encoder cleanup | 1.38 | 2.24 | 20.35 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Transformer load | 0.33 | 2.24 | 2.04 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Transformer attachment | 2.31 | 2.25 | 2.42 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | Denoise/readback | 88.42 | 6.72 | 15.74 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | VAE load | 3.38 | 2.25 | 3.84 |
-| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | VAE decode | 1.14 | 3.17 | 3.09 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Text encoder load | 1.52 | 1.04 | 0.94 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Text encoder attachment | 0.01 | 1.04 | 0.94 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Text encode | 92.05 | 3.42 | 22.34 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Text encoder cleanup | 1.44 | 3.42 | 20.35 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Transformer load | 0.37 | 2.24 | 2.05 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Transformer attachment | 3.34 | 2.66 | 3.29 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | Denoise/readback | 244.37 | 5.93 | 16.31 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | VAE load | 2.99 | 2.25 | 4.81 |
-| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | VAE decode | 1.15 | 2.96 | 4.08 |
+#### Text encoder load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 1.44 | 1.04 | 0.94 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 1.45 | 1.04 | 0.94 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 1.67 | 1.04 | 0.94 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 1.52 | 1.04 | 0.94 |
+
+#### Text encoder attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 0.02 | 1.04 | 0.94 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 0.01 | 1.04 | 0.94 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 0.02 | 1.04 | 0.94 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 0.01 | 1.04 | 0.94 |
+
+#### Text encode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 89.40 | 3.42 | 22.34 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 86.47 | 3.42 | 22.33 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 87.06 | 3.40 | 22.33 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 92.05 | 3.42 | 22.34 |
+
+#### Text encoder cleanup
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 1.44 | 3.42 | 20.35 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 1.43 | 3.42 | 20.35 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 1.38 | 2.24 | 20.35 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 1.44 | 3.42 | 20.35 |
+
+#### Transformer load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 0.24 | 2.24 | 2.04 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 0.25 | 2.24 | 2.04 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 0.33 | 2.24 | 2.04 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 0.37 | 2.24 | 2.05 |
+
+#### Transformer attachment
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 0.01 | 2.24 | 2.05 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 14.25 | 3.99 | 4.90 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 2.31 | 2.25 | 2.42 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 3.34 | 2.66 | 3.29 |
+
+#### Denoise/readback
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 265.68 | 2.26 | 20.58 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 83.66 | 4.28 | 15.30 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 88.42 | 6.72 | 15.74 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 244.37 | 5.93 | 16.31 |
+
+#### VAE load
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 3.47 | 2.24 | 3.78 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 3.05 | 2.24 | 3.78 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 3.38 | 2.25 | 3.84 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 2.99 | 2.25 | 4.81 |
+
+#### VAE decode
+
+| Method / scenario (details) | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) | 1.15 | 2.95 | 3.09 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | 1.13 | 2.95 | 3.03 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | 1.14 | 3.17 | 3.09 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | 1.15 | 2.96 | 4.08 |
+
+### Pipeline total
+
+Measured tracked totals and global peaks for the same complete runs above.
+These are not sums of the phase tables. The encoder and VAE routes remain
+as stated for this workload; the runtime column identifies the transformer.
+
+| Method / scenario (details) | Transformer runtime | VAE route | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| [Official leaf (no stream)](qwen-image-21-details.md#wsl-leaf) (reference) | official leaf hooks | leaf | 364.02 | 3.42 | 22.34 |
+| [`wsl_compat` (3 GiB override)](qwen-image-21-details.md#wsl-linear) | linear_runtime | leaf | 193.51 | 4.28 | 22.33 |
+| [`vmm_fast` (bounded)](qwen-image-21-details.md#wsl-native) | vmm_fast_runtime | leaf | 187.38 | 6.72 | 22.33 |
+| [`nvme_baseline`](qwen-image-21-details.md#wsl-nvme) | vmm_runtime | leaf | 349.09 | 5.93 | 22.34 |
 
 ## Windows 1024×1024 — separate VAE settings
 
