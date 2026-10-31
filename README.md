@@ -30,6 +30,9 @@ system RAM. All three use a shared Diffusers leaf text encoder and resident
 temporal VAE. The method is the transformer route. Times are seconds; memory
 peaks are sampled absolute driver GPU usage and process RSS in GiB.
 
+Before comparing rows, read the [labels and memory glossary](docs/benchmarks/glossary.md)
+for runtime labels, latency scope and peak-memory definitions.
+
 | Transformer method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Diffusers streamed leaf | 392.91 | 22.52 | 452.33 | 4.72 | 41.34 |

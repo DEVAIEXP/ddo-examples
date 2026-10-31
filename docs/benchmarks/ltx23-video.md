@@ -15,7 +15,7 @@ is independent. Scenario names link directly to [measurement details](ltx23-vide
 Times are seconds; GPU is sampled **absolute driver usage**, RAM is process **RSS**,
 and memory units are **GiB**. Average is denoise wall divided by steps, including
 warmup, not completed warm GPU timing. Tracked total excludes command startup and
-downloads. [Metric definitions](glossary.md).
+downloads. **Before reading the tables, see the [labels and memory glossary](glossary.md).**
 
 In comparable overview tables, official Diffusers leaf is the first row and the
 reference for that table: 🟢 ↓ is lower, 🔴 ↑ is higher. Equal displayed values

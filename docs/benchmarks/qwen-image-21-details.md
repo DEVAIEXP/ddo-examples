@@ -4,6 +4,9 @@
 Scenario links in those tables open the sections below; no local report download
 is required to read the results.
 
+**Labels and units:** read the [labels and memory glossary](glossary.md) before
+comparing runtime names, phase timings, tracked totals or memory peaks.
+
 ## Workload and measurement scope
 
 Base BF16, 512×512, 20 steps, seed 42, capybara prompt, CFG 1 and KV cache. Shared official leaf text encoder; resident untiled VAE on Windows/Linux, untiled non-streamed leaf VAE on WSL.

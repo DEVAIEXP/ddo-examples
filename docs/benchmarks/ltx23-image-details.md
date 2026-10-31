@@ -4,6 +4,9 @@
 Scenario links in those tables open the sections below; no local report download
 is required to read the results.
 
+**Labels and units:** read the [labels and memory glossary](glossary.md) before
+comparing runtime names, phase timings, tracked totals or memory peaks.
+
 ## Workload and measurement scope
 
 Distilled BF16, 1280×704, 8 steps, seed 43, real prompt, CFG 1/rescale 0.7, no PAG. Shared official leaf text encoder and resident untiled VAE in the primary comparison.
