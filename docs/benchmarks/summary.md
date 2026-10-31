@@ -25,7 +25,7 @@ pipeline work. Memory columns remain global run peaks, not decoder-only peaks.
 
 ### LTX video — 1280×704, 5 seconds, 121 frames, 8 steps
 
-| Transformer method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| Runtime method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | [Diffusers streamed leaf](ltx23-video-details.md#windows-leaf) | 392.91 | 22.52 | 452.33 | 4.72 | 41.34 |
 | [DDO linear](ltx23-video-details.md#windows-linear) | 262.22 | 23.47 | 336.44 | 4.72 | 47.87 |
@@ -37,7 +37,7 @@ audio; later audio-conditioned recording recipes are different comparisons.
 
 ### LTX image — 1280×704, 8 steps
 
-| Transformer method | Denoise (s) | VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| Runtime method | Denoise (s) | VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | [Diffusers streamed leaf](ltx23-image-details.md#windows-leaf) | 39.03 | 0.32 | 69.97 | 7.15 | 28.77 |
 | [DDO linear](ltx23-image-details.md#windows-linear) | 11.99 | 0.30 | 54.33 | 7.43 | 27.12 |
@@ -48,7 +48,7 @@ lowest global GPU peak of these three rows. See [image phases and final total](l
 
 ### Qwen Image 2.1 — 512×512, 20 steps
 
-| Transformer method | Denoise/readback (s) | VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| Runtime method | Denoise/readback (s) | VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | [Diffusers streamed leaf](qwen-image-21-details.md#windows-leaf) | 41.28 | 0.47 | 57.50 | 3.68 | 18.97 |
 | [DDO linear](qwen-image-21-details.md#windows-linear) | 17.94 | 0.49 | 41.36 | 6.69 | 21.58 |

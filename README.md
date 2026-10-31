@@ -33,7 +33,7 @@ peaks are sampled absolute driver GPU usage and process RSS in GiB.
 Before comparing rows, read the [labels and memory glossary](docs/benchmarks/glossary.md)
 for runtime labels, latency scope and peak-memory definitions.
 
-| Transformer method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
+| Runtime method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Diffusers streamed leaf | 392.91 | 22.52 | 452.33 | 4.72 | 41.34 |
 | DDO linear (`one_shot_fast`) | 262.22 | 23.47 | 336.44 | 4.72 | 47.87 |
