@@ -5,7 +5,7 @@ Use each model's tables for measured values; no universal ranking is implied.
 **Before reading the tables:** see the [labels and memory glossary](glossary.md)
 for runtime labels, denoise/decode scope, tracked totals and GPU/RAM peaks.
 
-## At a glance — Windows BF16
+## Windows BF16 comparison
 
 Existing single-run observations on an **RTX 3060 Ti 8 GiB / 64 GiB RAM**.
 Method names below identify the transformer; all rows in these primary Windows

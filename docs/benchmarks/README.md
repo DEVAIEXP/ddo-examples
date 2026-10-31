@@ -5,7 +5,7 @@ tables and hardware recommendations; scenario names link to their configuration,
 measurement scope and comparison limits.
 
 For a short method / latency / peak-memory comparison, start with the
-[comparison summary](summary.md#at-a-glance-windows-bf16). Primary model pages
+[comparison summary](summary.md#windows-bf16-comparison). Primary model pages
 then show a separate table for each phase and finish each platform set with the
 measured pipeline total. Choose a component strategy from its own phase table;
 do not combine the fastest rows into an unmeasured pipeline result.
