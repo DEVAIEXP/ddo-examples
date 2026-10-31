@@ -1,0 +1,66 @@
+            import json
+            import os
+            import threading
+            from observer import Native, Observer, ObservationStop
+
+            if not hasattr(transformer, "transformer_blocks") or len(transformer.transformer_blocks) < 2:
+                raise RuntimeError("Expected Qwen block sequence unavailable")
+            def execution_context():
+                return (threading.get_ident(), torch.cuda.current_device(),
+                        int(torch.cuda.current_stream().cuda_stream))
+            observer = Observer(Native(os.environ["DDO_VMM_LIBRARY_PATH"]), execution_context,
+                                deadline=int(os.environ["SZ_OBSERVATION_STARTED_NS"])/1e9+1800)
+            handles = []
+            def enter_block(index):
+                def enter(module, inputs):
+                    observer.check()
+                    if index in observer.blocks:
+                        raise RuntimeError("Repeated observed block")
+                    observer.block = index
+                    observer.blocks.append(index)
+                return enter
+            def first_output(module, inputs, output):
+                observer.select(output)
+            def second_output(module, inputs, output):
+                if observer.blocks != [0, 1] or observer.target is None:
+                    raise RuntimeError("Expected two-block observation incomplete")
+                raise ObservationStop("Two declared Qwen blocks observed; no further model work")
+            with run.phase("owner_access_two_blocks"):
+                try:
+                    handles += [transformer.transformer_blocks[index].register_forward_pre_hook(enter_block(index))
+                                for index in (0,1)]
+                    handles += [transformer.transformer_blocks[0].register_forward_hook(first_output),
+                                transformer.transformer_blocks[1].register_forward_hook(second_output)]
+                    try:
+                        with observer:
+                            denoise(state=prepared, output="latents")
+                        raise RuntimeError("Expected observation stop missing")
+                    except ObservationStop as stop:
+                        if getattr(stop, "__notes__", None):
+                            raise RuntimeError("Observation stop acquired failure notes") from stop
+                except BaseException as error:
+                    observer.failure = repr(error)
+                    raise
+                finally:
+                    for handle in handles:
+                        handle.remove()
+                    observer.save(args.output_dir)
+            with run.phase("collect_transformer"):
+                run.report(result.metrics_snapshot(collect_completed=True), "transformer")
+        with run.phase("cleanup_transformer"):
+            remove_dynamic_offload(transformer)
+            del result, transformer, prepared, denoise, scheduler, first_output, second_output, handles, handle
+            flush()
+        summary = observer.summary()
+        summary.update(expected_stop=True, cleanup_returned=True, decode_executed=False,
+                       completed_steps=0, close_scope="DDO removal returned; final driver release unavailable")
+        raw = json.dumps(summary, indent=2).encode()
+        if len(raw) > 262144:
+            raise RuntimeError("Rendered observation ceiling")
+        (args.output_dir/"observation.json").write_bytes(raw)
+        print(json.dumps(dict(event="owner_access", status=summary["status"],
+                              queries=summary["queries"], accesses=summary["accesses"])), flush=True)
+
+
+if __name__ == "__main__":
+    main()
