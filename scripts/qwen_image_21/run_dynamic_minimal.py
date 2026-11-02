@@ -1,4 +1,4 @@
-"""Didactic, phase-staged Qwen-Image 2.1 BF16 example using DDO linear offload."""
+"""Didactic, phase-staged Qwen-Image 2.1 BF16 example using DDO native VMM."""
 
 import argparse
 import gc
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,17 +21,21 @@ def parse_args():
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--steps", type=int, default=25, help="Base only; Turbo uses checkpoint sample_sigmas.")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--ddo-preset", default="auto")
+    from scripts.helpers.runner_controls import add_minimal_vmm_arguments
+    add_minimal_vmm_arguments(parser)
     parser.add_argument("--local-files-only", action="store_true")
     from scripts.helpers.qwen_custom_blocks import add_custom_blocks_arguments
 
     add_custom_blocks_arguments(parser)
     parser.add_argument("--vae-tiling", action="store_true", help="Opt-in native tiling; inspect output for seams.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/qwen_image_21_minimal")
-    return parse_common_arguments(parser)
+    return parse_common_arguments(parser, canonical_image=True)
 
 
 def main():
+    from ddo_vmm_bootstrap import ensure_vmm_fast_process
+    if not any(flag in sys.argv[1:] for flag in ("--help", "-h")):
+        ensure_vmm_fast_process()
     args = parse_args()
     import torch
 
@@ -44,7 +48,7 @@ def main():
     QwenImage21TextEncoderStep = custom.QwenImage21TextEncoderStep
     QwenImage21TurboPrepareStep = custom.QwenImage21TurboPrepareStep
     from diffusers import AutoencoderKLQwenImage21, FlowMatchEulerDiscreteScheduler, QwenImage21Transformer2DModel
-    from diffusers_dynamic_offloader import enable_offload, remove_dynamic_offload
+    from diffusers_dynamic_offloader import enable_offload, remove_dynamic_offload, from_pretrained_with_dynamic_offload
     from huggingface_hub import snapshot_download
     from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
@@ -52,6 +56,7 @@ def main():
 
     model = args.model_path or ("Qwen/Qwen-Image-2.1-Turbo" if args.variant == "turbo" else "Qwen/Qwen-Image-2.1")
     device, dtype = "cuda:0", torch.bfloat16
+    transformer_config = minimal_vmm_config(args, device)
     loading = {"local_files_only": args.local_files_only}
     # Pipeline-level saved sigmas are required for Turbo. Read metadata, not the conventional pipeline instance.
     from diffusers import QwenImage21Pipeline
@@ -116,14 +121,22 @@ def main():
 
     phase = tracker.step_start("transformer")
     purge_for_runner(args, "before_transformer", preset=args.ddo_preset, record_event=tracker.record_event)
-    transformer = QwenImage21Transformer2DModel.from_pretrained(
+    loaded = from_pretrained_with_dynamic_offload(
         model,
+        model_loader=QwenImage21Transformer2DModel,
+        apply_dynamic=False,
+        dynamic_offload_config=transformer_config,
         subfolder="transformer",
         torch_dtype=dtype,
         **loading,
-    ).eval()
+    )
+    transformer = loaded.module.eval()
+    record_runner_report(args, tracker, loaded.metrics_snapshot(), "transformer_load")
+    del loaded
     result = enable_offload(
         transformer,
+        config=transformer_config,
+        route="dynamic_offload",
         component="transformer",
         preset=args.ddo_preset,
         execution_device=device,

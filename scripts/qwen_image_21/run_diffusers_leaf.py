@@ -30,7 +30,8 @@ def parse_args(argv=None):
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--vae-tiling", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/qwen21_base_diffusers_leaf_20steps")
-    return parse_common_arguments(parser, argv, purge_phases=("before_run", "before_transformer", "after_run"))
+    return parse_common_arguments(parser, argv, canonical_image=True,
+                                  purge_phases=("before_run", "before_transformer", "after_run"))
 
 
 def main():

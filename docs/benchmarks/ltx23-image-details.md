@@ -4,6 +4,9 @@
 Scenario links in those tables open the sections below; no local report download
 is required to read the results.
 
+**Labels and units:** read the [labels and memory glossary](glossary.md) before
+comparing runtime names, phase timings, tracked totals or memory peaks.
+
 ## Workload and measurement scope
 
 Distilled BF16, 1280×704, 8 steps, seed 43, real prompt, CFG 1/rescale 0.7, no PAG. Shared official leaf text encoder and resident untiled VAE in the primary comparison.
@@ -250,14 +253,18 @@ source cache `24.625` and pages `32` MiB on both platforms;
 `--ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-registered-gb 24.625` on
 native Linux, and `--ddo-vmm-total-staging-gb 0.375 --ddo-vmm-source-registered-gb 0.5`
 on WSL. Use `scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py`, local
-model files, `--ddo-public-native-runtime --ddo-backend vmm --ddo-preset auto`,
-`--preset one_shot_fast`, `--vmm-resident-weight-budget-gb 4`,
-`--ddo-vmm-source-cache-gb 24.625 --ddo-vmm-page-mb 32`, dimensions/steps/seed
+model files, `--ddo-backend vmm --ddo-preset auto`,
+`--ddo-vmm-resident-weight-budget-gb 4`,
+`--ddo-vmm-source-cache-gb 24.625`, dimensions/steps/seed
 above, one pre-VAE cleanup and level-2 metrics. No compression, activation
 eviction, ETW, GPU timing or automatic execution-backing reclaim was enabled.
 Windows standby purge is a no-op on these targets. The controller allowed
 1,800 s with 10 s progress and 16 MiB per log stream, without retry or automatic
 termination. The [runner guide](../user/ltx2-image.md) explains total staging.
+The current spelling above selects the same public runtime; API selection,
+the `one_shot_fast` base settings and 32 MiB pages are implicit. Original
+recorded CLI spellings remain available through the separate diagnostic entry;
+the table reports the original runs, not new validation of the CLI revision.
 
 | Target / observation | Denoise wall (s) | Runner tracked total (s) |
 | --- | ---: | ---: |

@@ -1,8 +1,8 @@
-"""Readable, staged LTX 2.3 video example: modular blocks + linear DDO.
+"""Readable, staged LTX 2.3 video example: modular blocks + native VMM DDO.
 
 Read main() from top to bottom: text, connectors, image/audio conditioning,
 prepare, denoise, trim and decode. Model math belongs to the trusted blocks;
-only telemetry is shared with other runners. No native or kernel experiments.
+Shared helpers handle CLI and telemetry, while model phases remain visible here.
 """
 import argparse
 import gc
@@ -15,17 +15,15 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-REVISION = "f5c712e93c52283cb101da26d4a4544c808666bf"
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ddo-preset", default="auto", choices=(
-        "auto", "one_shot_fast", "low_ram_safe", "wsl_compat", "warm_process",
-        "diffusers_offload_compat", "diffusers_leaf_offload_compat", "off"))
+    from scripts.helpers.runner_controls import add_minimal_vmm_arguments
+    add_minimal_vmm_arguments(parser)
     parser.add_argument("--distilled-model", default="OzzyGT/LTX-2.3-Distilled-1.1")
     parser.add_argument("--custom-blocks", default="elismasilva/ltx2.3_video_custom_blocks")
     parser.add_argument("--custom-blocks-revision")
@@ -51,7 +49,7 @@ def parse_args(argv=None):
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_video=True)
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
@@ -113,11 +111,14 @@ def run_stage(pipe, state, device, retain=None):
 
 
 def main():
+    from ddo_vmm_bootstrap import ensure_vmm_fast_process
+    if not any(flag in sys.argv[1:] for flag in ("--help", "-h", "--dry-run")):
+        ensure_vmm_fast_process()
     # Parsing/help/dry-run do not load code, weights or initialize CUDA.
     args = parse_args()
     frames = round(args.seconds * args.frame_rate) // 8 * 8 + 1
     if args.dry_run:
-        print(json.dumps({"runner": Path(__file__).stem, "backend": "linear",
+        print(json.dumps({"runner": Path(__file__).stem, "backend": args.ddo_backend,
                           "preset": args.ddo_preset, "width": args.width, "height": args.height,
                           "num_frames": frames, "steps": args.steps, "seed": args.seed,
                           "decode_device": args.decode_device, "stream_video_decode": args.stream_video_decode,
@@ -147,10 +148,7 @@ def main():
     if not Path(source).is_dir():
         from huggingface_hub import snapshot_download
         # Resolve the snapshot first to avoid the pinned Diffusers dotted-ID bug.
-        revision = args.custom_blocks_revision
-        if revision is None and source == "elismasilva/ltx2.3_video_custom_blocks":
-            revision = REVISION
-        source = snapshot_download(repo_id=source, revision=revision,
+        source = snapshot_download(repo_id=source, revision=args.custom_blocks_revision,
                                    allow_patterns=["*.py", "modular_config.json"],
                                    local_files_only=args.local_files_only)
     blocks = ModularPipelineBlocks.from_pretrained(source, trust_remote_code=True,
@@ -162,7 +160,8 @@ def main():
     transformer_type = next(spec.type_hint for spec in blocks.expected_components if spec.name == "transformer")
     device, dtype = "cuda:0", torch.bfloat16
     settings = DynamicOffloadSettings.from_env(execution_device=device, offload_device="cpu",
-                                              default_preset=args.ddo_preset, environ=runner_settings_environ(args))
+                                              default_preset="one_shot_fast", environ=runner_settings_environ(args))
+    transformer_config = minimal_vmm_config(args, device)
     metrics = {"runner": Path(__file__).stem, "events": [], "steps": [], "requested_controls": vars(args).copy()}
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     active = []
@@ -186,11 +185,12 @@ def main():
         return phase
 
     def attach(module, name, group=False):
+        native_config = {"config": transformer_config} if name == "transformer" else {}
         result = enable_offload(module, settings=settings, component=name,
-                                route="diffusers_group_offload" if group else None,
+                                route="diffusers_group_offload" if group else "dynamic_offload",
                                 execution_device=device, offload_device="cpu", offload_type="leaf_level",
                                 low_cpu_mem_usage=True, use_stream=True, record_stream=False,
-                                record_event=tracker.record_event)
+                                record_event=tracker.record_event, **native_config)
         active.append((name, result))
         if result.should_move_to_execution_device:
             module.to(device)
@@ -276,7 +276,7 @@ def main():
         loaded = from_pretrained_with_dynamic_offload(
             args.distilled_model, model_loader=transformer_type, subfolder="transformer",
             torch_dtype=dtype, low_cpu_mem_usage=True, local_files_only=args.local_files_only,
-            apply_dynamic=False, dynamic_offload_config=settings.config if settings.enabled else None)
+            apply_dynamic=False, dynamic_offload_config=transformer_config)
         transformer = loaded.module
         load_ltx_lora(transformer, args, metrics, tracker.record_event)
         record_runner_report(args, tracker, loaded.metrics_snapshot(), "transformer_load")

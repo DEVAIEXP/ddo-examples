@@ -22,7 +22,9 @@ Keep scripts/<model> entry points explicit and didactic. Minimal runners contain
 the essential parsing/loading/modular orchestration instead of delegating to a
 hidden mode dispatcher. Separate minimal, linear, VMM, SDNQ/controls and diagnostics.
 Shared controls must use the canonical vocabulary in docs/user/runner-controls.md
-and scripts/helpers/runner_controls.py; preserve legacy aliases and reject
+and scripts/helpers/runner_controls.py. All public LTX image/video and Qwen entries
+use canonical names only; diagnostic controls stay in explicit
+diagnostic entries. Reject
 unsupported controls rather than accepting no-op arguments.
 Never enable diagnostic/compile/kernel flags as migration defaults.
 Use scripts/helpers/inference_utils.py for one shared RunTracker/memory schema;

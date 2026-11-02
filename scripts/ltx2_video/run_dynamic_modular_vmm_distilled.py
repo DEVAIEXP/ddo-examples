@@ -14,8 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, apply_execution_backing_reclaim
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
+from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
@@ -106,7 +107,7 @@ def parse_args(argv=None):
     from scripts.helpers.ltx2.video_entrypoints import configure_parser
     configure_parser(parser, "vmm")
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_video=True)
     validate_lora_arguments(parser, args)
     args.runner_entrypoint = "vmm"
     if args.compile_triton_execution:
@@ -399,26 +400,6 @@ def invoke_stage(pipe, payload, device, retain=None, *, execution_mode="inferenc
     return payload
 
 
-def compact_timestep_repeat(mask, *, latent_frames, latent_height, latent_width, patch_size=1, patch_size_t=1):
-    """Admit a known packed layout on CPU once, never synchronize CUDA in the denoise loop.
-
-    Spatially varying masks, appended references and unsupported temporal patching
-    retain the dense path. Mask equality is checked, not guessed from geometry.
-    """
-    import torch
-    if mask.device.type != "cpu":
-        raise ValueError("Compact timestep admission requires a CPU mask")
-    if patch_size_t != 1 or latent_height % patch_size or latent_width % patch_size:
-        return 1
-    repeat = (latent_height // patch_size) * (latent_width // patch_size)
-    if repeat <= 1 or mask.ndim != 3 or mask.shape[-1] != 1 or mask.shape[1] != latent_frames * repeat:
-        return 1
-    grouped = mask.reshape(mask.shape[0], latent_frames, repeat, 1)
-    if not torch.isfinite(mask).all() or not torch.equal(grouped, grouped[:, :, :1].expand_as(grouped)):
-        return 1
-    return repeat
-
-
 def load_custom_blocks(args):
     """Load one trusted code revision; local-files-only also applies to Hub code."""
     from diffusers import ModularPipelineBlocks
@@ -431,11 +412,8 @@ def load_custom_blocks(args):
         # This Diffusers revision treats dots in Hub repo IDs as Python package
         # separators. Resolve code only to an immutable snapshot, then use its
         # standard trusted local loader. Never download weights in this step.
-        revision = args.custom_blocks_revision
-        if revision is None and source == "elismasilva/ltx2.3_video_custom_blocks":
-            revision = "f5c712e93c52283cb101da26d4a4544c808666bf"
         source = snapshot_download(
-            repo_id=source, revision=revision,
+            repo_id=source, revision=args.custom_blocks_revision,
             allow_patterns=["*.py", "modular_config.json"],
             local_files_only=args.local_files_only,
         )
@@ -499,7 +477,7 @@ def run(args):
         environ=runner_settings_environ(args),
     )
     if args.ddo_backend == "vmm":
-        settings = replace(settings, config=replace(route.build_config_from_args(args),
+        settings = replace(settings, config=replace(apply_execution_backing_reclaim(route.build_config_from_args(args), args),
                            execution_device=device, offload_device="cpu", vmm_native_transport=native),
                            enabled=True, plan=False, requested_preset=route.requested_preset,
                            effective_preset=route.effective_preset,
@@ -939,10 +917,7 @@ def main():
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
     if not any(flag in sys.argv[1:] for flag in ("--help", "-h", "--dry-run")) and vmm_fast_requested(default_backend="vmm"):
-        early = argparse.ArgumentParser(add_help=False)
-        early.add_argument("--ddo-vmm-library-path")
-        early_args, _ = early.parse_known_args()
-        ensure_vmm_fast_process(library_path=early_args.ddo_vmm_library_path)
+        ensure_vmm_fast_process()
     args = parse_args()
     if args.dry_run:
         print(json.dumps(describe_plan(args), indent=2))

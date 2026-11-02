@@ -58,7 +58,8 @@ class SharedContracts(unittest.TestCase):
             monitor.stop()
 
     def test_minimal_and_linear_routes(self):
-        for runner in (minimal, linear):
+        self.assertEqual(minimal.parse_args(["--dry-run"]).ddo_backend, "vmm")
+        for runner in (linear,):
             for preset in ("auto", "low_ram_safe", "diffusers_leaf_offload_compat", "off"):
                 args = runner.parse_args(["--dry-run", "--ddo-preset", preset])
                 self.assertEqual(getattr(args, "ddo_backend", "linear"), "linear")
@@ -72,8 +73,10 @@ class SharedContracts(unittest.TestCase):
         args = native.parse_args(["--dry-run"])
         self.assertEqual(native.describe_plan(args)["effective_preset"], "vmm_fast")
         legacy = diagnostics.parse_args(["--dry-run", "--ddo-backend", "vmm"])
+        self.assertFalse(legacy.release_pytorch_host_cache_before_vae)
+        self.assertFalse(hasattr(args, "release_pytorch_host_cache_before_vae"))
         for name, value in vars(legacy).items():
-            if name != "runner_entrypoint":
+            if name not in {"runner_entrypoint", "release_pytorch_host_cache_before_vae"}:
                 self.assertEqual(getattr(args, name), value, name)
         with self.assertRaises(SystemExit):
             native.parse_args(["--compile-repeated-blocks"])
@@ -115,6 +118,7 @@ class SharedContracts(unittest.TestCase):
         self.assertFalse(linear.parse_args([]).build_ddo_profile)
         with self.assertRaises(SystemExit):
             linear.parse_args(["--build-ddo-profile"])
+        self.assertIsNone(linear.parse_args([]).ddo_profile)
         args = linear.parse_args(["--build-ddo-profile", "--ddo-profile", "video-workload"])
         self.assertTrue(args.build_ddo_profile)
         self.assertEqual(args.ddo_profile, "video-workload")

@@ -17,9 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# Resolve the independent ignored custom-block clone without an old host checkout.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
-
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
 
@@ -34,17 +31,9 @@ from diffusers_dynamic_offloader import (
     maybe_purge_windows_standby_cache,
     remove_dynamic_offload,
 )
-from diffusers.loaders.lora_pipeline import LTX2LoraLoaderMixin
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
-from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
-from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
-    LTX2ImageConnectorStep,
-    LTX2ImageDenoiseStep,
-    LTX2ImagePrepareLatentsStep,
-)
-from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
+from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
 from scripts.helpers.inference_utils import RunTracker, flush, get_sdnq_version
 
 DEVICE = "cuda:0"
@@ -71,15 +60,6 @@ SHOW_METRICS = True
 SAVE_METRICS = True
 SHOW_DENOISE_STEPS = True
 
-CRISP_LORA_PATH = "vrgamedevgirl84/LTX_2.3_Crisp_Enhance_Style_LoRa"
-CRISP_LORA_WEIGHT_NAME = "LTX2.3_Crisp_Enhance.safetensors"
-CRISP_LORA_ADAPTER_NAME = "crisp"
-CRISP_LORA_SCALE = 0.3
-SOFT_LORA_PATH = "vrgamedevgirl84/LTX_2.3_Soft_Enhance_Style_LoRa"
-SOFT_LORA_WEIGHT_NAME = "LTX2.3_Soft_Enhance.safetensors"
-SOFT_LORA_ADAPTER_NAME = "soft"
-SOFT_LORA_SCALE = 0.15
-
 DEFAULT_PROMPT = (
     "Fisheye close-up of a calico cat wearing a tiny flower crown, sniffing the camera lens "
     "in a sunny park, with bright colors, realistic fur detail, and playful viral-pet energy."
@@ -93,7 +73,10 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="LTX 2.3 distilled modular SDNQ text-to-image DDO runner.")
+    from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
+
+    parser = argparse.ArgumentParser(description="LTX 2.3 distilled modular SDNQ text-to-image DDO runner.", allow_abbrev=False)
+    add_custom_blocks_arguments(parser)
     parser.add_argument("--bits", type=int, choices=(4, 8), default=4, help="SDNQ transformer bit depth.")
     parser.add_argument(
         "--text-encoder-bits",
@@ -115,34 +98,24 @@ def parse_args():
     parser.add_argument("--pag", action="store_true")
     parser.add_argument("--pag-scale", type=float, default=0.2)
     parser.add_argument("--pag-layers", default="28")
-    parser.add_argument("--soft-lora", action="store_true", help="Load the Soft Enhance LoRA.")
-    parser.add_argument("--soft-lora-path", default=SOFT_LORA_PATH)
-    parser.add_argument("--soft-lora-weight-name", default=SOFT_LORA_WEIGHT_NAME)
-    parser.add_argument("--soft-lora-adapter-name", default=SOFT_LORA_ADAPTER_NAME)
-    parser.add_argument("--soft-lora-scale", type=float, default=SOFT_LORA_SCALE)
-    parser.add_argument("--crisp-lora", action="store_true", help="Load the Crisp Enhance LoRA.")
-    parser.add_argument("--crisp-lora-path", default=CRISP_LORA_PATH)
-    parser.add_argument("--crisp-lora-weight-name", default=CRISP_LORA_WEIGHT_NAME)
-    parser.add_argument("--crisp-lora-adapter-name", default=CRISP_LORA_ADAPTER_NAME)
-    parser.add_argument("--crisp-lora-scale", type=float, default=CRISP_LORA_SCALE)
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_sdnq_distilled")
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument("--preset", default="auto", choices=(
+    parser.add_argument("--ddo-preset", dest="preset", default="auto", choices=(
         "auto", "one_shot_fast", "low_ram_safe", "wsl_compat", "warm_process",
         "diffusers_leaf_offload_compat",
     ), help="DDO packed SDNQ preset or official leaf control.")
     parser.add_argument("--purge-before-transformer", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--memory-monitor", choices=("rss", "full"), default="full")
     parser.add_argument("--device", default=DEVICE)
-    parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
-    parser.add_argument("--build-ddo-profile", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--ddo-profile-steps", type=int, default=2)
-    parser.add_argument("--pre-vae-cleanup-repeats", type=int, default=1)
+    parser.set_defaults(
+        ddo_profile=None, build_ddo_profile=False, ddo_profile_steps=2,
+        pre_vae_cleanup_repeats=1, resident_module_budget_gb=None,
+        max_resident_module_budget_gb=None, pin_weight_budget_gb=None,
+        reset_dynamic_memory_after_run=False, print_presets=False,
+        text_encoder_dynamic_offload=False,
+        local_files_only=False,
+    )
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=1)
-    parser.add_argument("--resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--max-resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--pin-weight-budget-gb", type=float, default=None)
-    parser.add_argument("--reset-dynamic-memory-after-run", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=LOW_CPU_MEM_USAGE)
     parser.add_argument(
         "--text-encoder-low-cpu-mem-usage",
@@ -150,18 +123,11 @@ def parse_args():
         default=TEXT_ENCODER_LOW_CPU_MEM_USAGE,
     )
     parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument(
-        "--text-encoder-dynamic-offload",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Reserved: the experimental SDNQ DDO route currently applies only to the transformer.",
-    )
-    parser.add_argument("--print-presets", action="store_true")
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser)
+    args = parse_common_arguments(parser, canonical_image=True)
     validate_lora_arguments(parser, args)
     return args
 
@@ -182,66 +148,9 @@ def cleanup_runtime_state(record_event, event_name: str, *, repeats: int = 1) ->
     record_event(event_name, time.time() - event_t0, repeats=max(1, repeats))
 
 
-def load_lora_adapter(model, source: str, weight_name: str, adapter_name: str) -> str:
-    state_dict, metadata = LTX2LoraLoaderMixin.lora_state_dict(
-        source,
-        weight_name=weight_name,
-        return_lora_metadata=True,
-    )
-    model.load_lora_adapter(
-        state_dict,
-        prefix="transformer",
-        adapter_name=adapter_name,
-        metadata=metadata,
-        low_cpu_mem_usage=LOW_CPU_MEM_USAGE,
-    )
-    return adapter_name
-
-
-def maybe_load_lora(model, run_metrics, enabled, kind, path, weight_name, adapter_name, scale, record_event):
-    if not enabled:
-        return None
-    event_t0 = time.time()
-    actual_adapter_name = load_lora_adapter(model, path, weight_name, adapter_name)
-    run_metrics["lora_adapters"].append(
-        {
-            "kind": kind,
-            "path": path,
-            "weight_name": weight_name,
-            "adapter_name": actual_adapter_name,
-            "scale": scale,
-        }
-    )
-    record_event(
-        f"load_{kind}_lora",
-        time.time() - event_t0,
-        path=path,
-        weight_name=weight_name,
-        adapter_name=actual_adapter_name,
-        scale=scale,
-    )
-    return actual_adapter_name, scale
-
-
-def activate_loras(model, adapters, record_event) -> None:
-    if not adapters:
-        return
-    names, scales = zip(*adapters, strict=False)
-    try:
-        model.set_adapters(list(names), weights=list(scales))
-    except TypeError:
-        model.set_adapters(list(names), adapter_weights=list(scales))
-    record_event("activate_loras", 0.0, adapters=dict(adapters))
-
-
 def build_run_slug(args, *, text_encoder_kind: str) -> str:
     pag_tag = f"pag{args.pag_scale:g}_layers{args.pag_layers.replace(',', '-')}" if args.pag else "nopag"
-    lora_tags = []
-    if args.soft_lora:
-        lora_tags.append(f"{args.soft_lora_adapter_name}{args.soft_lora_scale:g}")
-    if args.crisp_lora:
-        lora_tags.append(f"{args.crisp_lora_adapter_name}{args.crisp_lora_scale:g}")
-    lora_tag = "lora_" + "-".join(lora_tags) if lora_tags else "nolora"
+    lora_tag = f"lora{len(args.lora)}" if args.lora else "nolora"
     return "_".join(
         [
             "ltx23_image",
@@ -289,6 +198,14 @@ def main():
     global TEXT_ENCODER_LOW_CPU_MEM_USAGE
 
     args = parse_args()
+    custom, custom_blocks_metadata = load_custom_blocks(args)
+    LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
+    LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
+    LTX2ImageTransformer2DModel = custom.LTX2ImageTransformer2DModel
+    LTX2ImageTextConnectors = custom.LTX2ImageTextConnectors
+    LTX2ImageConnectorStep = custom.LTX2ImageConnectorStep
+    LTX2ImageDenoiseStep = custom.LTX2ImageDenoiseStep
+    LTX2ImagePrepareLatentsStep = custom.LTX2ImagePrepareLatentsStep
     if args.print_presets:
         print(format_dynamic_offload_presets(default_preset=args.preset, running_on_wsl=is_wsl_environment()))
         return
@@ -346,6 +263,7 @@ def main():
         "run_slug": run_slug,
         "model_tag": MODEL_TAG,
         "model_path": MODEL_PATH,
+        "custom_blocks": custom_blocks_metadata,
         "workflow": "text2image",
         "sdnq_enabled": True,
         "sdnq_bits": args.bits,
@@ -375,7 +293,7 @@ def main():
         "pag_enabled": args.pag,
         "pag_scale": args.pag_scale if args.pag else 0.0,
         "pag_applied_layers": pag_layers if args.pag else None,
-        "lora_enabled": args.soft_lora or args.crisp_lora,
+        "lora_enabled": bool(args.lora),
         "lora_adapters": [],
         "dtype": str(DTYPE),
         "offload_backend": "diffusers_leaf" if leaf_control else "ddo_sdnq_runtime",
@@ -530,16 +448,6 @@ def main():
     transformer = LTX2ImageTransformer2DModel.from_pretrained(sdnq_model_path, **transformer_load_kwargs)
     load_ltx_lora(transformer, args, run_metrics, record_event)
     record_event("load_sdnq_transformer", time.time() - event_t0, source=sdnq_model_path, kind=transformer_kind)
-
-    active_adapters = []
-    for item in [
-        (args.soft_lora, "soft", args.soft_lora_path, args.soft_lora_weight_name, args.soft_lora_adapter_name, args.soft_lora_scale),
-        (args.crisp_lora, "crisp", args.crisp_lora_path, args.crisp_lora_weight_name, args.crisp_lora_adapter_name, args.crisp_lora_scale),
-    ]:
-        adapter = maybe_load_lora(transformer, run_metrics, *item, record_event=record_event)
-        if adapter is not None:
-            active_adapters.append(adapter)
-    activate_loras(transformer, active_adapters, record_event)
 
     event_t0 = time.time()
     transformer_offload = enable_offload(

@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, apply_execution_backing_reclaim
 
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
@@ -84,7 +84,7 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_native=True)
     if sum((args.vae_vmm_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE native, leaf and resident overrides are mutually exclusive")
     if args.vae_vmm_offload:
@@ -147,7 +147,7 @@ def main():
     loading = {"local_files_only": args.local_files_only}
     device, dtype = "cuda:0", torch.bfloat16
     route = resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset)
-    config = route.build_config_from_args(args)
+    config = apply_execution_backing_reclaim(route.build_config_from_args(args), args)
     route_description = {"backend": route.backend, "preset": route.effective_preset}
     metrics = {
         "runner": Path(__file__).stem,

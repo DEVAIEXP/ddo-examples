@@ -1,4 +1,4 @@
-"""VMM experiment runner for the LTX 2.3 distilled modular BF16 T2I blocks.
+"""Public VMM runner for the LTX 2.3 distilled modular BF16 T2I blocks.
 
 This is intentionally separate from ``run_dynamic_modular_distilled.py``. It
 keeps the text encoder on Diffusers group offload by default and routes the dense
@@ -17,9 +17,6 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-# Resolve the independent ignored custom-block clone before allocator bootstrap.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
@@ -45,14 +42,7 @@ from diffusers_dynamic_offloader import (
 )
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
-from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
-from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
-from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
-    LTX2ImageConnectorStep,
-    LTX2ImageDenoiseStep,
-    LTX2ImagePrepareLatentsStep,
-)
+from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
 from scripts.helpers.inference_utils import RunTracker, flush
 
 import ddo_vmm_allocator
@@ -201,42 +191,26 @@ def parse_optional_float(value: str | None) -> float | None:
     return float(value)
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, backend_reporting_fields
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, backend_reporting_fields, apply_execution_backing_reclaim
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
+    from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
+
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument(
-        "--local-files-only",
-        action=argparse.BooleanOptionalAction,
-        default=LOCAL_FILES_ONLY,
-        help="Use only already cached model artifacts; useful for reproducible offline benchmarks.",
-    )
-    parser.add_argument("--preset", default="one_shot_fast")
-    parser.add_argument(
-        "--ddo-backend",
-        choices=("linear", "vmm"),
-        default="vmm",
-        help="DDO backend; this VMM harness defaults to vmm.",
-    )
-    parser.add_argument(
-        "--ddo-preset",
-        default="auto",
-        help="DDO backend preset; VMM accepts auto or nvme_baseline.",
-    )
-    parser.add_argument(
-        "--ddo-public-native-runtime", action=argparse.BooleanOptionalAction, default=None,
-        help="Use the public DDO native API (default for native fast unless the diagnostic adapter is selected).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-source-cache-gb", type=float, default=0.0,
-        help="Native persistent host-storage ceiling in GiB; 0 disables retention (not WDDM GPU residency).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-source-registered-gb", type=float, default=0.0,
-        help="CUDA registration ceiling within persistent storage; 0 uses its ceiling. Multiples of 64 MiB.",
-    )
+    parser.add_argument("--local-files-only", action=argparse.BooleanOptionalAction, default=LOCAL_FILES_ONLY)
+    parser.add_argument("--ddo-backend", choices=("linear", "vmm"), default="vmm")
+    parser.add_argument("--ddo-preset", default="auto", help="VMM: auto or nvme_baseline.")
+    parser.add_argument("--ddo-vmm-resident-weight-budget-gb", dest="vmm_resident_weight_budget_gb",
+                        type=float, default=VMM_RESIDENT_WEIGHT_BUDGET_GB)
+    parser.add_argument("--ddo-vmm-total-staging-gb", type=float, default=None,
+                        help="Total host-staging capacity in GiB; see the documented defaults.")
+    parser.add_argument("--ddo-vmm-source-cache-gb", type=float, default=0.0,
+                        help="Retained CPU source ceiling in GiB; 0 disables retention.")
+    parser.add_argument("--ddo-vmm-source-registered-gb", type=float, default=0.0,
+                        help="CUDA registration ceiling in GiB; 0 inherits the source ceiling.")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--prompt", default=prompt)
     parser.add_argument("--negative-prompt", default=negative_prompt)
@@ -251,191 +225,48 @@ def parse_args():
     parser.add_argument("--pag", action=argparse.BooleanOptionalAction, default=PAG_ENABLED)
     parser.add_argument("--pag-scale", type=float, default=PAG_SCALE)
     parser.add_argument("--pag-layers", default=",".join(str(layer) for layer in PAG_APPLIED_LAYERS))
-    parser.add_argument("--fake-prompt", action=argparse.BooleanOptionalAction, default=FAKE_PROMPT_EMBEDS)
     parser.add_argument("--text-encoder-native-vmm", action="store_true",
-                        help="Opt-in native encoder phase; unload before transformer loading. Requires public VMM runtime and real prompt.")
-    parser.add_argument("--generation-repeats", type=int, default=GENERATION_REPEATS)
-    parser.add_argument("--transformer-prepare-repeats", type=int, default=TRANSFORMER_PREPARE_REPEATS)
-    parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
-    parser.add_argument(
-        "--build-ddo-profile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Calibrate the named DDO profile with a zero-resident denoise run.",
-    )
-    parser.add_argument(
-        "--ddo-profile-steps",
-        type=int,
-        default=2,
-        help="Denoise steps used only by --build-ddo-profile (default: 2).",
-    )
-    parser.add_argument("--pre-vae-cleanup-repeats", type=int, default=None)
-    parser.add_argument("--vae-leaf-offload", action="store_true",
-                        help="Opt in to no-stream leaf VAE decode; preserve resident decode otherwise.")
+                        help="Opt in to the native encoder phase before loading the transformer.")
+    parser.add_argument("--vae-leaf-offload", action="store_true")
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_vmm")
-    parser.add_argument(
-        "--vmm-resident-weight-budget-gb",
-        type=float,
-        default=VMM_RESIDENT_WEIGHT_BUDGET_GB,
-        help="Maximum CUDA physical backing for mapped transformer weights (default: 2.0 GiB).",
-    )
-    parser.add_argument(
-        "--vmm-staging-buffer-gb",
-        type=float,
-        default=VMM_STAGING_BUFFER_GB,
-        help="Size of each bounded pinned staging slot; VMM uses two slots for current/next prefetch overlap (default: 0.625 GiB).",
-    )
-    parser.add_argument(
-        "--vmm-windows-file-read-chunk-mb",
-        type=int,
-        default=VMM_WINDOWS_FILE_READ_CHUNK_MB,
-        help="Chunk size for overlapped checkpoint reads into each VMM staging slot (default: 2 MiB).",
-    )
-    parser.add_argument(
-        "--vmm-virtual-host-transport",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Use Windows VirtualAlloc staging slots registered once with CUDA for direct VMM H2D transfers.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-register-source-weights",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Register existing CPU weight storage once and DMA directly to device-backed VMM pages.",
-    )
-    parser.add_argument(
-        "--vmm-host-cache-gb",
-        type=float,
-        default=0.0,
-        help="Budget for persistent registered CPU weight pages; 0 retains bounded file transport only (default: 0).",
-    )
-    parser.add_argument(
-        "--vmm-pin-source-weights",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Pin all CPU transformer source weights before denoise; off by default because setup is expensive.",
-    )
-    parser.add_argument(
-        "--vmm-fault-fallback",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Keep successfully faulted VMM groups resident; use temporary CUDA storage for later groups under the VMM budget.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-adapter",
-        action="store_true",
-        help="Use the DDO diagnostic VMM block adapter for the transformer instead of DDO runtime.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-pressure-driven-residency",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Let the native allocator and DXGI budget guard determine transformer residency; requires the fresh-process allocator launcher.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-dxgi-budget-guard",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Protect device/shared/system reserves using live DXGI budgets before native VMM materialization (Windows only).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-dxgi-local-headroom-gb",
-        type=float,
-        default=0.0,
-        help="VRAM reserve retained below the WDDM local budget; 0 disables this individual limit.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-dxgi-shared-headroom-gb",
-        type=float,
-        default=4.0,
-        help="Shared-memory reserve retained below the WDDM non-local budget (default: 4 GiB).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-dxgi-system-headroom-gb",
-        type=float,
-        default=4.0,
-        help="Physical/commit RAM reserve retained before a native VMM mapping (default: 4 GiB).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-library",
-        default=str(DDO_VMM_ALLOCATOR_ROOT / "build" / "Release" / "ddo_vmm.dll"),
-        help="Path to the DDO VMM native library.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-module-pattern",
-        default=r"transformer_blocks\.\d+$",
-        help="Regex selecting transformer blocks for the diagnostic adapter.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-leaf-residency",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Use direct-parameter transformer modules as VMM groups for finer residency granularity.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-backing",
-        choices=("device", "host"),
-        default="device",
-        help="Physical VMM backing for diagnostic groups; host enables WDDM/shared-memory probing.",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-virtual-multiplier",
-        type=float,
-        default=1.0,
-        help="Virtual model-address span multiplier over attached BF16 weight payload (default: 1).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-page-mb",
-        type=int,
-        default=32,
-        help="Native VMM physical page size in MiB (default: 32).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-pin-source",
-        action="store_true",
-        help="Pin CPU source weights and use non-blocking VMM copies (experimental; uses locked host memory).",
-    )
-    parser.add_argument(
-        "--ddo-vmm-diagnostic-pin-source-gb",
-        type=float,
-        default=0.0,
-        help="Upper bound for pinned CPU source weights; 0 means unlimited when --ddo-vmm-diagnostic-pin-source is set.",
-    )
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=METRICS_LEVEL)
-    parser.add_argument(
-        "--ddo-gpu-timing", action="store_true",
-        help="Opt-in DDO compute-stream event timing and completed-ticket collection after readback; public native route only.",
-    )
-    parser.add_argument(
-        "--memory-monitor", choices=("full", "rss"), default="full",
-        help="RAM sampling: full preserves USS on Windows; rss avoids repeated full-memory scans. RSS is not USS. GPU sampling is unchanged.",
-    )
-    parser.add_argument(
-        "--show-ddo-profile",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Print the DDO transport/profile summary after denoise.",
-    )
+    parser.add_argument("--memory-monitor", choices=("full", "rss"), default="full")
+    parser.add_argument("--show-profile", dest="show_ddo_profile", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
-    parser.add_argument("--ddo-native-timeline", action="store_true",
-                        help="Opt-in native stream windows (not pure kernel/DMA activity); requires --ddo-gpu-timing.")
-    parser.add_argument("--ddo-diagnostic-step-wait", action="store_true",
-                        help="Diagnostic only: wait for each compute-step event; requires --ddo-native-timeline. Not a benchmark.")
     parser.add_argument("--low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=MODEL_LOW_CPU_MEM_USAGE)
     parser.add_argument("--text-encoder-low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=TEXT_ENCODER_LOW_CPU_MEM_USAGE)
     parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--text-encoder-dynamic-offload", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--max-resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--pin-weight-budget-gb", type=float, default=None)
-    parser.add_argument("--reset-dynamic-memory-after-run", action=argparse.BooleanOptionalAction, default=RESET_DYNAMIC_MEMORY_AFTER_RUN)
-    parser.add_argument("--print-presets", action="store_true")
+    # Fixed orchestration values are not CLI options. Experiment controls live
+    # exclusively in run_dynamic_modular_vmm_diagnostics_distilled.py.
+    parser.set_defaults(
+        preset="one_shot_fast", ddo_public_native_runtime=None,
+        vmm_staging_buffer_gb=VMM_STAGING_BUFFER_GB,
+        vmm_windows_file_read_chunk_mb=VMM_WINDOWS_FILE_READ_CHUNK_MB,
+        vmm_virtual_host_transport=False, vmm_host_cache_gb=0.0,
+        vmm_pin_source_weights=False, vmm_fault_fallback=True,
+        ddo_vmm_diagnostic_adapter=False, ddo_vmm_diagnostic_register_source_weights=False,
+        ddo_vmm_diagnostic_pressure_driven_residency=False, ddo_vmm_diagnostic_dxgi_budget_guard=False,
+        ddo_vmm_dxgi_local_headroom_gb=0.0, ddo_vmm_dxgi_shared_headroom_gb=4.0,
+        ddo_vmm_dxgi_system_headroom_gb=4.0, ddo_vmm_diagnostic_library=None,
+        ddo_vmm_module_pattern=r"transformer_blocks\.\d+$", ddo_vmm_diagnostic_leaf_residency=False,
+        ddo_vmm_diagnostic_backing="device", ddo_vmm_diagnostic_virtual_multiplier=1.0,
+        ddo_vmm_page_mb=32, ddo_vmm_diagnostic_pin_source=False, ddo_vmm_diagnostic_pin_source_gb=0.0,
+        fake_prompt=FAKE_PROMPT_EMBEDS, generation_repeats=GENERATION_REPEATS,
+        transformer_prepare_repeats=TRANSFORMER_PREPARE_REPEATS,
+        ddo_profile=None, build_ddo_profile=False, ddo_profile_steps=2, pre_vae_cleanup_repeats=None,
+        ddo_gpu_timing=False, ddo_native_timeline=False, ddo_diagnostic_step_wait=False,
+        resident_module_budget_gb=None, max_resident_module_budget_gb=None, pin_weight_budget_gb=None,
+        reset_dynamic_memory_after_run=RESET_DYNAMIC_MEMORY_AFTER_RUN, print_presets=False,
+    )
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser)
+    args = parse_common_arguments(parser, canonical_native=True, image_staging_slots=True)
     validate_lora_arguments(parser, args)
     return args
+
+
 
 
 def build_run_slug(seed):
@@ -549,6 +380,14 @@ def main():
     global prompt, negative_prompt
 
     args = parse_args()
+    custom, custom_blocks_metadata = load_custom_blocks(args)
+    LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
+    LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
+    LTX2ImageTransformer2DModel = custom.LTX2ImageTransformer2DModel
+    LTX2ImageTextConnectors = custom.LTX2ImageTextConnectors
+    LTX2ImageConnectorStep = custom.LTX2ImageConnectorStep
+    LTX2ImageDenoiseStep = custom.LTX2ImageDenoiseStep
+    LTX2ImagePrepareLatentsStep = custom.LTX2ImagePrepareLatentsStep
     if args.ddo_public_native_runtime is None:
         args.ddo_public_native_runtime = (
             args.ddo_backend == "vmm"
@@ -557,7 +396,7 @@ def main():
         )
     if args.text_encoder_native_vmm:
         if not args.ddo_public_native_runtime or args.fake_prompt:
-            raise SystemExit("--text-encoder-native-vmm requires --ddo-public-native-runtime and real prompt")
+            raise SystemExit("--text-encoder-native-vmm requires the native vmm/auto route and a real prompt")
         if args.text_encoder_group_offload is True or args.text_encoder_dynamic_offload is False:
             raise SystemExit("Native encoder cannot be combined with explicit encoder compatibility controls")
     TEXT_ENCODER_NATIVE_VMM = args.text_encoder_native_vmm
@@ -680,6 +519,8 @@ def main():
             vmm_dxgi_system_headroom_gb=args.ddo_vmm_dxgi_system_headroom_gb,
         )
         DYNAMIC_OFFLOAD_SETTINGS = replace(DYNAMIC_OFFLOAD_SETTINGS, config=public_config, enabled=True)
+    DYNAMIC_OFFLOAD_SETTINGS = replace(DYNAMIC_OFFLOAD_SETTINGS,
+        config=apply_execution_backing_reclaim(DYNAMIC_OFFLOAD_SETTINGS.config, args))
     REQUESTED_DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.requested_preset
     DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.effective_preset
     DYNAMIC_OFFLOAD_CONFIG = DYNAMIC_OFFLOAD_SETTINGS.config
@@ -750,6 +591,7 @@ def main():
         "run_slug": run_slug,
         "model_tag": MODEL_TAG,
         "model_path": MODEL_PATH,
+        "custom_blocks": custom_blocks_metadata,
         "width": WIDTH,
         "height": HEIGHT,
         "seed": seed,

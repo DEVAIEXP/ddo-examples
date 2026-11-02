@@ -18,7 +18,7 @@ def test_leaf_control_never_selects_dense_or_vmm_runtime():
 def test_purge_follows_connector_cleanup_before_weight_load():
     source = SOURCE.read_text(encoding="utf-8")
     cleanup = source.index('cleanup_runtime_state(record_event, "cleanup_after_connectors")')
-    purge = source.index('purge_result = maybe_purge_windows_standby_cache(')
+    purge = source.index('purge_result = purge_for_runner(')
     load = source.index('transformer = LTX2ImageTransformer2DModel.from_pretrained(')
     assert cleanup < purge < load
     assert 'run_metrics["standby_purge"]' in source
