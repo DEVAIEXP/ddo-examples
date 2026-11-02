@@ -57,8 +57,7 @@ def parse_args(argv=None):
             "diffusers_leaf_offload_compat",
         ),
     )
-    parser.add_argument("--resident-module-budget-gb", type=float)
-    parser.add_argument("--pin-weight-budget-gb", type=float)
+    parser.set_defaults(resident_module_budget_gb=None, pin_weight_budget_gb=None)
     add_reporting_arguments(parser)
     parser.add_argument("--variant", choices=("base",), default="base")
     parser.add_argument("--model-path", help="Saved SDNQ transformer checkpoint override.")
@@ -99,7 +98,7 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_image=True)
     if sum((args.vae_linear_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE linear, leaf and resident overrides are mutually exclusive")
     if args.vae_linear_offload and args.ddo_preset not in (

@@ -11,9 +11,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# Resolve the independent ignored custom-block clone without an old host checkout.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
-
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
 
@@ -30,14 +27,7 @@ from diffusers_dynamic_offloader import (
 )
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
-from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
-from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
-from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
-    LTX2ImageConnectorStep,
-    LTX2ImageDenoiseStep,
-    LTX2ImagePrepareLatentsStep,
-)
+from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
 from scripts.helpers.inference_utils import RunTracker, flush
 
 RUNNING_ON_WSL = False
@@ -113,9 +103,12 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
+    from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
+
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument("--preset", default="auto")
+    parser.add_argument("--ddo-preset", dest="preset", default="auto")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--prompt", default=prompt)
     parser.add_argument("--negative-prompt", default=negative_prompt)
@@ -130,23 +123,14 @@ def parse_args():
     parser.add_argument("--pag", action=argparse.BooleanOptionalAction, default=PAG_ENABLED)
     parser.add_argument("--pag-scale", type=float, default=PAG_SCALE)
     parser.add_argument("--pag-layers", default=",".join(str(layer) for layer in PAG_APPLIED_LAYERS))
-    parser.add_argument("--fake-prompt", action=argparse.BooleanOptionalAction, default=FAKE_PROMPT_EMBEDS)
-    parser.add_argument("--generation-repeats", type=int, default=GENERATION_REPEATS)
-    parser.add_argument("--transformer-prepare-repeats", type=int, default=TRANSFORMER_PREPARE_REPEATS)
-    parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
-    parser.add_argument(
-        "--build-ddo-profile",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Calibrate the named DDO profile with a zero-resident denoise run.",
+    parser.set_defaults(
+        fake_prompt=False, generation_repeats=1, transformer_prepare_repeats=1,
+        ddo_profile=None, build_ddo_profile=False, ddo_profile_steps=2,
+        pre_vae_cleanup_repeats=None, resident_module_budget_gb=None,
+        max_resident_module_budget_gb=None, pin_weight_budget_gb=None,
+        reset_dynamic_memory_after_run=RESET_DYNAMIC_MEMORY_AFTER_RUN, print_presets=False,
+        local_files_only=False,
     )
-    parser.add_argument(
-        "--ddo-profile-steps",
-        type=int,
-        default=2,
-        help="Denoise steps used only by --build-ddo-profile (default: 2).",
-    )
-    parser.add_argument("--pre-vae-cleanup-repeats", type=int, default=None)
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular")
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=METRICS_LEVEL)
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=None)
@@ -156,13 +140,8 @@ def parse_args():
     parser.add_argument("--text-encoder-low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=TEXT_ENCODER_LOW_CPU_MEM_USAGE)
     parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--text-encoder-dynamic-offload", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--max-resident-module-budget-gb", type=float, default=None)
-    parser.add_argument("--pin-weight-budget-gb", type=float, default=None)
-    parser.add_argument("--reset-dynamic-memory-after-run", action=argparse.BooleanOptionalAction, default=RESET_DYNAMIC_MEMORY_AFTER_RUN)
-    parser.add_argument("--print-presets", action="store_true")
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser)
+    args = parse_common_arguments(parser, canonical_image=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
     return args
 
@@ -263,6 +242,14 @@ def main():
     global prompt, negative_prompt
 
     args = parse_args()
+    custom, custom_blocks_metadata = load_custom_blocks(args)
+    LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
+    LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
+    LTX2ImageTransformer2DModel = custom.LTX2ImageTransformer2DModel
+    LTX2ImageTextConnectors = custom.LTX2ImageTextConnectors
+    LTX2ImageConnectorStep = custom.LTX2ImageConnectorStep
+    LTX2ImageDenoiseStep = custom.LTX2ImageDenoiseStep
+    LTX2ImagePrepareLatentsStep = custom.LTX2ImagePrepareLatentsStep
 
     if args.build_ddo_profile and not args.ddo_profile:
         raise SystemExit("--build-ddo-profile requires --ddo-profile NAME")
@@ -357,6 +344,7 @@ def main():
         "run_slug": run_slug,
         "model_tag": MODEL_TAG,
         "model_path": MODEL_PATH,
+        "custom_blocks": custom_blocks_metadata,
         "width": WIDTH,
         "height": HEIGHT,
         "seed": seed,

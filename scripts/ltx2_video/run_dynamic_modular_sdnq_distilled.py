@@ -19,7 +19,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-REVISION = "f5c712e93c52283cb101da26d4a4544c808666bf"
 SDNQ_MODELS = {
     4: "OzzyGT/LTX-2.3-Distilled-1.1-sdnq-dynamic-int4",
     8: "OzzyGT/LTX-2.3-Distilled-1.1-sdnq-dynamic-int8",
@@ -89,7 +88,7 @@ def parse_args(argv=None):
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_video=True)
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
@@ -194,10 +193,7 @@ def main():
     if not Path(source).is_dir():
         from huggingface_hub import snapshot_download
         # Resolve the snapshot first to avoid the pinned Diffusers dotted-ID bug.
-        revision = args.custom_blocks_revision
-        if revision is None and source == "elismasilva/ltx2.3_video_custom_blocks":
-            revision = REVISION
-        source = snapshot_download(repo_id=source, revision=revision,
+        source = snapshot_download(repo_id=source, revision=args.custom_blocks_revision,
                                    allow_patterns=["*.py", "modular_config.json"],
                                    local_files_only=args.local_files_only)
     blocks = ModularPipelineBlocks.from_pretrained(source, trust_remote_code=True,

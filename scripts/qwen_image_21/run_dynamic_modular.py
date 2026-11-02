@@ -22,8 +22,7 @@ def parse_args(argv=None):
         choices=("diffusers_leaf_offload_compat",),
         help="Explicit encoder policy for matched transformer comparisons; default follows the existing preset.",
     )
-    parser.add_argument("--resident-module-budget-gb", type=float)
-    parser.add_argument("--pin-weight-budget-gb", type=float)
+    parser.set_defaults(resident_module_budget_gb=None, pin_weight_budget_gb=None)
     add_reporting_arguments(parser)
     parser.add_argument("--variant", choices=("base", "turbo"), default="base")
     parser.add_argument("--model-path")
@@ -62,7 +61,7 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_image=True, workload_profiles=True)
     if sum((args.vae_linear_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE linear, leaf and resident overrides are mutually exclusive")
     if args.vae_linear_offload and args.ddo_preset not in (
@@ -213,6 +212,8 @@ def main():
                 transformer,
                 component="transformer",
                 preset=args.ddo_preset,
+                profile_name=args.ddo_profile or "",
+                build_profile=args.build_ddo_profile,
                 **overrides,
                 execution_device=device,
                 use_environment=False,
@@ -262,9 +263,11 @@ def main():
                         print(f"Step {index + 1}: {elapsed:.3f} s (host callback)", flush=True)
                     return values
 
-                with timer:
+                with result.profile_run() as profile_report, timer:
                     # CPU readback is the completion boundary; no per-step waits.
                     latent = denoise(state=prepared, callback_on_step_end=callback, output="latents").cpu()
+                if profile_report is not None:
+                    metrics["ddo_profile"] = profile_report
                 metrics["denoise_through_cpu_readback_sec"] = time.perf_counter() - started
                 # Resolve the final event only once, when explicitly requested.
                 metrics["execution_timing"] = timer.snapshot(wait=args.ddo_gpu_timing)
@@ -281,6 +284,11 @@ def main():
             # Remove all state/component references, not just the module variable.
             del result, transformer, prepared, denoise, scheduler, timer, callback
             flush()
+
+        if args.build_ddo_profile:
+            metrics["operation"] = "capacity_profile_calibration"
+            print(f"Capacity profile calibration complete: {metrics.get('ddo_profile')}", flush=True)
+            return
 
         with run.phase("load_vae"):
             vae_class = QwenImage21ImageVAE if args.vae_no_temporal_cache else AutoencoderKLQwenImage21

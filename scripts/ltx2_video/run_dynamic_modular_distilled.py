@@ -2,7 +2,7 @@
 
 Read main() from top to bottom: text, connectors, image/audio conditioning,
 prepare, denoise, trim and decode. Model math belongs to the trusted blocks;
-only telemetry is shared with other runners. No native or kernel experiments.
+Computation defaults match the recorded BF16 linear recipe. No native or kernel experiments.
 """
 import argparse
 import gc
@@ -15,11 +15,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-REVISION = "f5c712e93c52283cb101da26d4a4544c808666bf"
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
+from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -32,6 +32,16 @@ def parse_args(argv=None):
     parser.add_argument("--max-sequence-length", type=int, default=256)
     parser.add_argument("--memory-monitor", choices=("full", "rss"), default="rss")
     parser.add_argument("--reuse-rotary-embeddings", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--feed-forward-chunk-size", type=int, default=1024,
+                        help="Token chunk size for feed-forward layers; 0 disables chunking.")
+    parser.add_argument("--normalization-chunk-size", type=int, default=1024,
+                        help="Token chunk size for RMSNorm temporaries; 0 disables chunking.")
+    parser.add_argument("--phase-modulation", action=argparse.BooleanOptionalAction, default=True,
+                        help="Use phase-local modulation buffers in the trusted transformer.")
+    parser.add_argument("--compact-timesteps", action=argparse.BooleanOptionalAction, default=True,
+                        help="Compact spatially uniform timesteps; unsupported layouts remain dense.")
+    parser.add_argument("--inplace-residuals", action=argparse.BooleanOptionalAction, default=True,
+                        help="Reuse model-owned residual states during inference.")
     parser.add_argument("--ddo-profile", help="Named transformer workload profile.")
     parser.add_argument("--build-ddo-profile", action="store_true")
     parser.add_argument("--custom-blocks", default="elismasilva/ltx2.3_video_custom_blocks")
@@ -57,7 +67,7 @@ def parse_args(argv=None):
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, argv)
+    args = parse_common_arguments(parser, argv, canonical_video=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
@@ -69,9 +79,31 @@ def parse_args(argv=None):
         parser.error("Streaming video decode requires --decode-device cuda:0.")
     if args.max_sequence_length <= 0:
         parser.error("Use a positive text sequence length.")
+    if min(args.feed_forward_chunk_size, args.normalization_chunk_size) < 0:
+        parser.error("Chunk sizes must be nonnegative.")
     if args.build_ddo_profile and not args.ddo_profile:
         parser.error("--build-ddo-profile requires --ddo-profile NAME.")
     return args
+
+
+def print_linear_memory_policy(settings):
+    """Distinguish preset policy and configured limits from the resolved plan."""
+    config = settings.config
+    print(f"  [dynamic-offload] preset: requested={settings.requested_preset}, "
+          f"effective={settings.effective_preset}, execution={config.execution_mode}.", flush=True)
+    if not settings.enabled or config.execution_mode != "linear_runtime":
+        return
+    if config.auto_budget_policy != "off":
+        cap = config.max_resident_module_budget_gb
+        cap_label = f"{cap:.2f} GiB" if cap > 0 else "no explicit cap"
+        print(f"  [dynamic-offload] memory policy: automatic ({config.auto_budget_policy}), "
+              f"resident ceiling={cap_label}; ceiling is not a target. "
+              "Full CPU pinning may select a zero resident-module budget when RAM permits.", flush=True)
+    else:
+        print(f"  [dynamic-offload] memory policy: fixed resident-module budget="
+              f"{config.resident_module_budget_gb:.2f} GiB, "
+              f"CPU pinning requested={config.pin_cpu_memory}. "
+              "This budget does not limit total GPU memory.", flush=True)
 
 
 def move_tensors(value, device):
@@ -131,6 +163,10 @@ def main():
                           "preset": args.ddo_preset, "width": args.width, "height": args.height,
                           "num_frames": frames, "steps": args.steps, "seed": args.seed,
                           "decode_device": args.decode_device, "stream_video_decode": args.stream_video_decode,
+                          "feed_forward_chunk_size": args.feed_forward_chunk_size,
+                          "normalization_chunk_size": args.normalization_chunk_size,
+                          "phase_modulation": args.phase_modulation, "compact_timesteps": args.compact_timesteps,
+                          "inplace_residuals": args.inplace_residuals,
                           "phases": ["text_encoder", "connectors", "video_encoder", "audio_encoder",
                                      "prepare", "denoise", "trim", "decode"]}, indent=2))
         return
@@ -157,10 +193,7 @@ def main():
     if not Path(source).is_dir():
         from huggingface_hub import snapshot_download
         # Resolve the snapshot first to avoid the pinned Diffusers dotted-ID bug.
-        revision = args.custom_blocks_revision
-        if revision is None and source == "elismasilva/ltx2.3_video_custom_blocks":
-            revision = REVISION
-        source = snapshot_download(repo_id=source, revision=revision,
+        source = snapshot_download(repo_id=source, revision=args.custom_blocks_revision,
                                    allow_patterns=["*.py", "modular_config.json"],
                                    local_files_only=args.local_files_only)
     blocks = ModularPipelineBlocks.from_pretrained(source, trust_remote_code=True,
@@ -173,6 +206,7 @@ def main():
     device, dtype = "cuda:0", torch.bfloat16
     settings = DynamicOffloadSettings.from_env(execution_device=device, offload_device="cpu",
                                               default_preset=args.ddo_preset, environ=runner_settings_environ(args))
+    print_linear_memory_policy(settings)
     metrics = {"runner": Path(__file__).stem, "events": [], "steps": [], "requested_controls": vars(args).copy()}
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     active = []
@@ -297,6 +331,21 @@ def main():
         pipe.update_components(transformer=transformer)
         run_stage(pipe, state, device)
         scheduler = pipe.scheduler
+        if args.compact_timesteps:
+            import inspect
+            if "timestep_token_repeat" not in inspect.signature(type(transformer).forward).parameters:
+                raise RuntimeError("Compact timesteps require the trusted transformer with timestep_token_repeat support")
+            repeat = compact_timestep_repeat(
+                state["conditioning_mask"],
+                latent_frames=(state["num_frames"] - 1) // pipe.vae.temporal_compression_ratio + 1,
+                latent_height=args.height // pipe.vae.spatial_compression_ratio,
+                latent_width=args.width // pipe.vae.spatial_compression_ratio,
+                patch_size=transformer.config.patch_size,
+                patch_size_t=transformer.config.patch_size_t,
+            )
+            state["video_timestep_token_repeat"] = repeat
+            metrics["compact_timesteps_executed"] = repeat > 1
+            metrics["video_timestep_token_repeat"] = repeat
         if args.reuse_rotary_embeddings:
             rotary_pipe = phase_pipeline(exports.LTX2VideoPrepareRotaryStep(), device)
             rotary_pipe.update_components(transformer=transformer)
@@ -314,6 +363,19 @@ def main():
         pipe.update_components(transformer=transformer, scheduler=scheduler,
                                guider=LTX2Guidance(guidance_scale=1.0, guidance_rescale=0.7),
                                audio_guider=exports.LTX2VideoAudioGuidance(guidance_scale=1.0))
+        chunk_handles = []
+        if args.phase_modulation:
+            transformer.enable_phase_modulation()
+            metrics["phase_modulation_executed"] = True
+        if args.inplace_residuals:
+            transformer.enable_inplace_residuals()
+            metrics["inplace_residuals_executed"] = True
+        if args.feed_forward_chunk_size:
+            from scripts.helpers.execution.feed_forward_chunking import enable_feed_forward_chunking
+            chunk_handles.append(enable_feed_forward_chunking(transformer, args.feed_forward_chunk_size))
+        if args.normalization_chunk_size:
+            from scripts.helpers.execution.feed_forward_chunking import enable_normalization_chunking
+            chunk_handles.append(enable_normalization_chunking(transformer, args.normalization_chunk_size))
         result = attach(transformer, "transformer")
         tracker.step_end("attach_transformer", start)
         purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
@@ -325,8 +387,16 @@ def main():
             metrics["ddo_profile"] = profile_report
         with result.cleanup_on_error():
             finish_phase("denoise", start, pipe)
+        for handle in chunk_handles:
+            handle.remove()
+        chunk_handles.clear()
         del result, transformer, scheduler
         pipe = None
+        if args.build_ddo_profile:
+            metrics.update(status="completed", operation="capacity_profile_calibration")
+            purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
+            print(f"Capacity profile calibration complete: {metrics.get('ddo_profile')}", flush=True)
+            return
         keep = {"latents", "audio_latents", "base_token_count", "audio_ref_num_tokens", "audio_num_frames",
                 "height", "width", "num_frames", "dtype", "batch_size", "generator", "seed"}
         state = {name: value for name, value in state.items() if name in keep}

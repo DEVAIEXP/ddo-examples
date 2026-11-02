@@ -1,5 +1,5 @@
 """
-Minimal LTX 2.3 modular image runner using diffusers-dynamic-offloader.
+Minimal LTX 2.3 modular image runner using DDO native VMM for the transformer.
 
 This is the small integration shape a host app should need:
 - let DDO handle preset/lifecycle decisions
@@ -9,13 +9,15 @@ This is the small integration shape a host app should need:
 import argparse
 import os
 import sys
+from ddo_vmm_bootstrap import ensure_vmm_fast_process
+
+if __name__ == "__main__" and not any(flag in sys.argv[1:] for flag in ("--help", "-h")):
+    ensure_vmm_fast_process()
+
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-# Resolve the independent ignored custom-block clone without an old host checkout.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
@@ -30,14 +32,7 @@ from diffusers_dynamic_offloader import (
 )
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
-from custom_blocks.ltx2_image import LTX2ImageDistilledBlocks, LTX2ImageTextEncoderStep
-from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
-from custom_blocks.ltx2_image.connectors_ltx2_image import LTX2ImageTextConnectors
-from custom_blocks.ltx2_image.modular_blocks_ltx2_image import (
-    LTX2ImageConnectorStep,
-    LTX2ImageDenoiseStep,
-    LTX2ImagePrepareLatentsStep,
-)
+from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
 from scripts.helpers.inference_utils import RunTracker, flush
 
 MODEL_PATH = os.getenv("MODEL_PATH", r"elismasilva/ltx2.3-image-distilled-1.1")
@@ -65,13 +60,17 @@ PROMPT = (
 NEGATIVE_PROMPT = ""
 
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=__doc__)
+    from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
+
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument("--preset", default=PRESET)
+    from scripts.helpers.runner_controls import add_minimal_vmm_arguments
+    add_minimal_vmm_arguments(parser)
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--prompt", default=PROMPT)
     parser.add_argument("--negative-prompt", default=NEGATIVE_PROMPT)
@@ -81,15 +80,13 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--guidance-scale", type=float, default=GUIDANCE_SCALE)
     parser.add_argument("--guidance-rescale", type=float, default=GUIDANCE_RESCALE)
-    parser.add_argument("--ddo-profile", default=None, help="Named DDO denoise workload profile.")
-    parser.add_argument("--build-ddo-profile", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--ddo-profile-steps", type=int, default=2)
+    parser.set_defaults(ddo_profile=None, build_ddo_profile=False, ddo_profile_steps=2, local_files_only=False)
     parser.add_argument("--output-dir", default=str(OUTPUT_DIR))
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=SHOW_METRICS)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=SAVE_METRICS)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser)
+    args = parse_common_arguments(parser, canonical_image=True)
     validate_lora_arguments(parser, args)
     return args
 
@@ -110,13 +107,13 @@ def denoise_callback(components, step_index, timestep, callback_kwargs):
     elapsed = now - last_time
     denoise_callback.last_time = now
     avg = (now - start_time) / (step_index + 1)
-    alloc = torch.cuda.memory_allocated(DEVICE) / 1024**3
-    reserved = torch.cuda.memory_reserved(DEVICE) / 1024**3
     if not SHOW_DENOISE_STEPS:
         return callback_kwargs
+    # Native VMM does not provide PyTorch getDeviceStats counters.
+    # Driver memory and DDO capacity remain in the shared run report.
     print(
         f"  [denoise] step {step_index + 1}/{STEPS} elapsed={elapsed:.4f}s "
-        f"avg={avg:.4f}s/it torch_alloc={alloc:.2f} GiB torch_reserved={reserved:.2f} GiB",
+        f"avg={avg:.4f}s/it torch_alloc=n/a torch_reserved=n/a",
         flush=True,
     )
     return callback_kwargs
@@ -148,12 +145,21 @@ def main():
     global SHOW_METRICS, SAVE_METRICS, SHOW_DENOISE_STEPS
 
     args = parse_args()
+    custom, custom_blocks_metadata = load_custom_blocks(args)
+    LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
+    LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
+    LTX2ImageTransformer2DModel = custom.LTX2ImageTransformer2DModel
+    LTX2ImageTextConnectors = custom.LTX2ImageTextConnectors
+    LTX2ImageConnectorStep = custom.LTX2ImageConnectorStep
+    LTX2ImageDenoiseStep = custom.LTX2ImageDenoiseStep
+    LTX2ImagePrepareLatentsStep = custom.LTX2ImagePrepareLatentsStep
     if args.build_ddo_profile and not args.ddo_profile:
         raise SystemExit("--build-ddo-profile requires --ddo-profile NAME")
     MODEL_PATH = args.model_path
     OUTPUT_DIR = Path(args.output_dir)
     DEVICE = args.device
-    PRESET = args.preset
+    PRESET = args.ddo_preset
+    transformer_config = minimal_vmm_config(args, DEVICE)
     WIDTH = args.width
     HEIGHT = args.height
     STEPS = args.steps
@@ -167,7 +173,7 @@ def main():
     SAVE_METRICS = args.save_metrics
     SHOW_DENOISE_STEPS = args.show_denoise_steps
 
-    run_metrics = {"events": [], "steps": []}
+    run_metrics = {"events": [], "steps": [], "custom_blocks": custom_blocks_metadata}
     tracker = RunTracker(DEVICE, run_metrics, interval=0.1, show_metrics=SHOW_METRICS,
                          memory_monitor=args.memory_monitor)
     record_event = tracker.record_event
@@ -275,6 +281,7 @@ def main():
         low_cpu_mem_usage=True,
         device_map="cpu",
         apply_dynamic=False,
+        dynamic_offload_config=transformer_config,
     )
     transformer = transformer_load.module
     load_ltx_lora(transformer, args, run_metrics, record_event)
@@ -288,6 +295,8 @@ def main():
     event_t0 = time.time()
     transformer_result = enable_offload(
         transformer,
+        config=transformer_config,
+        route="dynamic_offload",
         preset=PRESET,
         component="transformer",
         execution_device=DEVICE,
@@ -299,7 +308,6 @@ def main():
     )
     transformer = transformer_result.module
     print_offload_route("transformer", transformer_result)
-    transformer_hook = transformer_result.hook
     transformer_route = transformer_result.route
 
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
@@ -345,8 +353,10 @@ def main():
     )
     record_event("denoise_modular_pipe_call", time.time() - event_t0)
     run_metrics["ddo_profile"] = ddo_profile_report
-    if transformer_hook is not None:
-        transformer_hook.print_profile_summary()
+    report = transformer_result.metrics_snapshot(collect_completed=True)
+    record_runner_report(args, tracker, report, "transformer")
+    if SHOW_METRICS:
+        print(report.format_profile())
 
     image_latent = denoise_state.to(OFFLOAD_DEVICE)
     latent_height = prepare_state["latent_height"]
@@ -355,7 +365,6 @@ def main():
 
     if transformer_route == "dynamic_offload":
         remove_dynamic_offload(transformer)
-    transformer_hook = None
     del prepare_state, denoise_state, prepare_pipe, denoise_pipe, transformer, scheduler
     del transformer_result
     del connector_prompt_embeds, connector_attention_mask
