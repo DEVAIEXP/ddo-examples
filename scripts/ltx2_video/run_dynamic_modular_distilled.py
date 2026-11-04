@@ -21,6 +21,9 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
+from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ddo-backend", choices=("linear",), default="linear")
@@ -67,6 +70,7 @@ def parse_args(argv=None):
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
+    add_video_self_attention_argument(parser)
     args = parse_common_arguments(parser, argv, canonical_video=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
@@ -380,7 +384,8 @@ def main():
         tracker.step_end("attach_transformer", start)
         purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
         start = tracker.step_start("denoise")
-        with result.cleanup_on_error(), result.profile_run() as profile_report:
+        with result.cleanup_on_error(), result.profile_run() as profile_report, \
+                video_self_attention(transformer, args.video_self_attention, metrics):
             run_stage(pipe, state, device, retain={"latents", "audio_latents"})
             torch.cuda.synchronize(device)
         if profile_report is not None:

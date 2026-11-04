@@ -111,3 +111,22 @@ See [Windows standby purge](runner-controls.md#windows-standby-purge).
 Display/save switches accept their `--no-...` forms. Phase observations do not
 prove GPU completion or local VRAM placement. CPU parser checks do not establish
 GPU or performance acceptance.
+## Video self-attention backend
+
+All LTX video runners accept `--video-self-attention` with `default`,
+`flash-attn2`, or `sol-attn`. The default preserves the model's configured
+attention. `flash-attn2` uses the optional external FlashAttention 2 package.
+`sol-attn` uses Triton Sol-Attn (`diag`, `tau=1.0`) and uses FlashAttention 2
+for the first transformer block. These choices apply only to eligible video
+self-attention. Audio, cross-attention, and masked or perturbed calls retain
+their original routes. Saved metrics include per-layer dispatch counts.
+
+Install the optional FlashAttention 2 wheel as described in [Setup](setup.md).
+For Sol-Attn, make the Sana `techniques/sparse_backends` directory importable
+in the runner environment. The tested Sana revision is
+[`781e834`](https://github.com/NVlabs/Sana/commit/781e8341fb3b29d3aea5d50265772e9619340b66).
+The selected GPU validation used the VMM Distilled runner on an RTX 3060 Ti.
+Sol-Attn accepts dynamic token counts and requires CUDA BF16 video attention
+with head dimension 128. The validated recipe used 14,080 video tokens
+(1280 × 704, 5 seconds at 24 fps). A 10-second run encountered an illegal
+CUDA memory access during denoising. Its cause remains under investigation.
