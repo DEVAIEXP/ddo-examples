@@ -6,7 +6,7 @@ DIAGNOSTICS = {
     "compile_fp8_linears", "fp8_feed_forward_reuse", "fp8_feed_forward_temporary_mb",
     "fp8_group_offload_control", "fp8_group_offload_stream", "diagnose_denoise",
     "diagnose_operators", "diagnose_operator_module", "inspect_host_memory_phases",
-    "detach_transformer_auxiliary_cpu_sources", "fused_rms_modulation", "fused_rotary_pair",
+    "detach_transformer_auxiliary_cpu_sources", "fused_rms_modulation",
 }
 NATIVE = DIAGNOSTICS | {
     "transformer_fp8_weight_only", "text_encoder_native_vmm",

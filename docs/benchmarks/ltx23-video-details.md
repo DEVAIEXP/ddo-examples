@@ -7,6 +7,45 @@ is required to read the results.
 **Labels and units:** read the [labels and memory glossary](glossary.md) before
 comparing runtime names, phase timings, tracked totals or memory peaks.
 
+## Windows attention backends
+
+Both workloads use the distilled BF16 checkpoint, 1280×704 at 24 fps,
+eight steps, seed 43, the guitar image and conditioning audio, and temporal
+CUDA decode. Both request `vmm/auto` with 1.5 GiB each for resident weights
+and staging and 24.625 GiB each for source cache and registration. The
+feed-forward and normalization chunk sizes are 1024. Phase modulation,
+compact timesteps and inplace residuals are enabled.
+
+### 10-second attention observations
+
+All six runs completed with 241 frames, execution backing reclaim enabled,
+and Windows standby purge before the run, after the text encoder, and before
+the transformer. The unfused FlashAttention 2 and Sol-Attn measurements are
+reused controls from earlier runs. The SDPA internal kernel was not recorded.
+The fused SDPA and FlashAttention 2 runs recorded 384 paired rotary submissions
+each. Sol-Attn recorded 376 because layer 0 uses FlashAttention 2 without fusion
+in that mode. Each backend pair produced matching MP4 digests.
+
+### 5-second fused RoPE pair
+
+Both runs use the same Sol-Attn selection, with FlashAttention 2 on layer 0.
+The fused variant applies the paired Q/K rotary kernel only on the 47
+Sol-Attn layers and records 376 submissions. Execution backing reclaim was
+disabled for this pair. The corresponding runner option is
+`--fused-rotary-pair`.
+
+### 5-second SDPA and FlashAttention 2 observations
+
+The fused runs use `--fused-rotary-pair` with the default attention dispatcher
+or `--video-self-attention flash-attn2`. Each records 384 paired rotary
+submissions across 48 layers and eight steps. The two SDPA runs differ in
+the fused RoPE flag and output directory. Their MP4 digests match.
+The unfused FlashAttention 2
+observation used a separate experimental harness and Hub custom blocks,
+while the fused run used the VMM runner and local custom blocks. Their MP4
+digests match. Their timing difference includes any effects of those setup
+differences. Execution backing reclaim was disabled for all four observations.
+
 ## Workload and measurement scope
 
 Distilled BF16, 1280×704, 5 seconds at 24 fps (121 frames), 8 steps, seed 43; real guitar image/prompt, no input audio, generated stereo audio. Shared official leaf encoder/auxiliaries and resident temporal GPU VAE decode.

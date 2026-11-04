@@ -166,6 +166,44 @@ as stated for this workload; the runtime column identifies the transformer.
 | [`vmm_fast`](ltx23-video-details.md#windows-native) | vmm_fast_runtime | resident, temporal streaming | 277.09 | 5.21 | 32.65 |
 | [`nvme_baseline`](ltx23-video-details.md#windows-nvme) | vmm_runtime | resident, temporal streaming | 281.67 | 5.24 | 25.99 |
 
+## Windows — video self-attention backends
+
+These are separate single-run observations on an RTX 3060 Ti with
+`vmm_fast_runtime` and temporal CUDA VAE streaming. See the
+[measurement conditions](ltx23-video-details.md#windows-attention-backends)
+and [metric definitions](glossary.md).
+
+### 10-second conditioned video
+
+| Video self-attention | Fused RoPE | Denoise (s) | Decode and save (s) | Tracked total (s) | Denoise peak GPU (absolute, GiB) | Full-run peak GPU (absolute, GiB) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| [PyTorch SDPA](ltx23-video-details.md#10-second-attention-observations) | Off | 498.34 | 53.84 | 596.97 | 6.80 | 6.80 |
+| [PyTorch SDPA](ltx23-video-details.md#10-second-attention-observations) | On | 490.44 | 52.42 | 587.05 | 6.24 | 6.24 |
+| [FlashAttention 2](ltx23-video-details.md#10-second-attention-observations) (reused control) | Off | 414.24 | 52.07 | 512.85 | 6.90 | 6.90 |
+| [FlashAttention 2](ltx23-video-details.md#10-second-attention-observations) | On | 408.93 | 52.23 | 505.03 | 6.11 | 6.11 |
+| [Sol-Attn](ltx23-video-details.md#10-second-attention-observations) (reused control) | Off | 329.83 | 52.62 | 426.31 | 6.88 | 6.88 |
+| [Sol-Attn](ltx23-video-details.md#10-second-attention-observations) | On | 320.73 | 52.31 | 416.92 | 6.74 | 6.74 |
+
+The SDPA pair differs only in the recorded fused RoPE flag and output directory.
+Its sampled denoise peak fell by 582 MiB. Each backend pair produced identical
+MP4 digests. The two reused controls come from earlier runs.
+
+### 5-second conditioned video
+
+| Video self-attention | Fused RoPE | Denoise (s) | Decode and save (s) | Tracked total (s) | Denoise peak GPU (absolute, GiB) | Full-run peak GPU (absolute, GiB) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| [PyTorch SDPA](ltx23-video-details.md#5-second-sdpa-and-flashattention-2-observations) | Off | 220.93 | 27.95 | 290.18 | 5.09 | 5.27 |
+| [PyTorch SDPA](ltx23-video-details.md#5-second-sdpa-and-flashattention-2-observations) | On | 214.18 | 27.47 | 283.09 | 4.66 | 5.08 |
+| [FlashAttention 2](ltx23-video-details.md#5-second-sdpa-and-flashattention-2-observations) | Off | 216.59 | 30.00 | 287.38 | 5.09 | 5.27 |
+| [FlashAttention 2](ltx23-video-details.md#5-second-sdpa-and-flashattention-2-observations) | On | 194.86 | 27.60 | 263.25 | 4.66 | 5.08 |
+| [Sol-Attn](ltx23-video-details.md#5-second-fused-rope-pair) | Off | 161.26 | 27.36 | 230.71 | 5.23 | 5.27 |
+| [Sol-Attn](ltx23-video-details.md#5-second-fused-rope-pair) | On | 161.67 | 28.14 | 231.07 | 5.09 | 5.27 |
+
+In the matched Sol-Attn pair, fused RoPE reduced the sampled denoise peak by
+146 MiB. The saved MP4 files had identical SHA-256 digests. The FlashAttention 2
+MP4 files also matched, with the measurement differences described in the
+[scenario details](ltx23-video-details.md#5-second-sdpa-and-flashattention-2-observations).
+
 ## Linux — BF16
 
 The NVMe observation uses a different driver/cache session from the route trio;

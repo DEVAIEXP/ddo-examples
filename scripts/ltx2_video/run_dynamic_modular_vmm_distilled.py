@@ -71,7 +71,7 @@ def parse_args(argv=None):
     parser.add_argument("--fused-rms-modulation", action="store_true",
                         help="Preserve the original RMSNorm forward and opt into experimental Triton modulation.")
     parser.add_argument("--fused-rotary-pair", action="store_true",
-                        help="Opt into experimental paired Q/K Triton rotary application.")
+                        help="Fuse Q/K rotary embeddings for eligible video self-attention.")
     parser.add_argument("--compile-repeated-blocks", action="store_true",
                         help="Diagnostic regional Inductor compilation; no CUDA Graphs or eager fallback.")
     parser.add_argument("--compile-eager-rmsnorm", action="store_true",
@@ -680,15 +680,14 @@ def run(args):
         if args.inplace_residuals:
             transformer.enable_inplace_residuals()
             metrics["inplace_residuals_executed"] = True
-        if args.fused_rms_modulation or args.fused_rotary_pair:
+        if args.fused_rms_modulation:
             from ddo_vmm_allocator.triton_execution import TritonExecutionOps
             execution_ops = TritonExecutionOps()
             transformer.set_execution_ops(
                 rms_modulate=execution_ops.rms_modulate if args.fused_rms_modulation else None,
-                rotary_pair=execution_ops.rotary_pair if args.fused_rotary_pair else None,
             )
             metrics["execution_ops_requested"] = dict(
-                rms_modulation=args.fused_rms_modulation, rotary_pair=args.fused_rotary_pair
+                rms_modulation=True
             )
         if args.feed_forward_chunk_size:
             from scripts.helpers.execution.feed_forward_chunking import enable_feed_forward_chunking
@@ -733,7 +732,10 @@ def run(args):
                     "attention with RoPE executes the explicitly selected fused Q/K normalization instead.")
         result = attach(transformer, "transformer", group=args.fp8_group_offload_control,
                         config=transformer_config if args.transformer_fp8_weight_only and not args.fp8_group_offload_control else None)
-        with result.cleanup_on_error(), video_self_attention(transformer, args.video_self_attention, metrics):
+        with result.cleanup_on_error(), video_self_attention(
+            transformer, args.video_self_attention, metrics,
+            fused_rotary=args.fused_rotary_pair,
+        ):
             if args.detach_transformer_auxiliary_cpu_sources:
                 report(result.detach_auxiliary_cpu_sources(enabled=True), "transformer_auxiliary_sources")
             inspect("transformer_attached", transformer)

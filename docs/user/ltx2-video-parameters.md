@@ -122,6 +122,13 @@ self-attention. Audio, cross-attention, and masked or perturbed calls retain
 their original routes. Saved metrics include per-layer dispatch counts.
 
 Install the optional FlashAttention 2 wheel as described in [Setup](setup.md).
+
+The VMM distilled runner accepts `--fused-rotary-pair` as an opt-in Triton
+kernel for Q/K RoPE in eligible video self-attention. It works with the default
+dispatcher and with `--video-self-attention flash-attn2` or `sol-attn`.
+In Sol-Attn mode, layer 0 keeps its FlashAttention 2 route without fusion.
+See the [Windows attention measurements](../benchmarks/ltx23-video.md#windows--video-self-attention-backends).
+
 For Sol-Attn, make the Sana `techniques/sparse_backends` directory importable
 in the runner environment. The tested Sana revision is
 [`781e834`](https://github.com/NVlabs/Sana/commit/781e8341fb3b29d3aea5d50265772e9619340b66).
