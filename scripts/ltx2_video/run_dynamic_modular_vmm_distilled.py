@@ -18,6 +18,9 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
+from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
+
+
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
@@ -107,6 +110,7 @@ def parse_args(argv=None):
     from scripts.helpers.ltx2.video_entrypoints import configure_parser
     configure_parser(parser, "vmm")
     add_lora_arguments(parser)
+    add_video_self_attention_argument(parser)
     args = parse_common_arguments(parser, argv, canonical_video=True)
     validate_lora_arguments(parser, args)
     args.runner_entrypoint = "vmm"
@@ -729,7 +733,7 @@ def run(args):
                     "attention with RoPE executes the explicitly selected fused Q/K normalization instead.")
         result = attach(transformer, "transformer", group=args.fp8_group_offload_control,
                         config=transformer_config if args.transformer_fp8_weight_only and not args.fp8_group_offload_control else None)
-        with result.cleanup_on_error():
+        with result.cleanup_on_error(), video_self_attention(transformer, args.video_self_attention, metrics):
             if args.detach_transformer_auxiliary_cpu_sources:
                 report(result.detach_auxiliary_cpu_sources(enabled=True), "transformer_auxiliary_sources")
             inspect("transformer_attached", transformer)
