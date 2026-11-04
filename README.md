@@ -19,8 +19,9 @@ Read the [documentation website](https://devaiexp.github.io/ddo-examples/), incl
 
 Start with the [user guide](docs/user/README.md) to install packages and choose a
 model runner. This path does not require a DDO source checkout or native compiler.
-Experimental packages `0.1.0rc3` are available on PyPI. Follow the package setup
-guide to install DDO, the allocator and runner dependencies in one environment.
+DDO `0.1.0rc4` and its optional VMM allocator `0.1.0rc3` are available on PyPI.
+Follow the package setup guide to install the packages and runner dependencies
+in one environment.
 
 ## Compare performance and memory
 
@@ -32,6 +33,9 @@ peaks are sampled absolute driver GPU usage and process RSS in GiB.
 
 Before comparing rows, read the [labels and memory glossary](docs/benchmarks/glossary.md)
 for runtime labels, latency scope and peak-memory definitions.
+
+All rows use default PyTorch SDPA for video self-attention. The internal SDPA
+kernel was not recorded.
 
 | Runtime method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
