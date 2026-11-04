@@ -26,6 +26,10 @@ or a reused non-side-by-side observation also have no arrows.
 
 ## Windows — BF16
 
+The primary comparison uses the default PyTorch SDPA path for video
+self-attention. The external FlashAttention 2 and Sol-Attn options were not
+selected. The specific kernel chosen internally by SDPA was not recorded.
+
 Phase-table rows identify the complete pipeline by its transformer route.
 Encoder, conditioning and VAE strategies are shared as stated above; a row
 labeled `vmm_fast` does not imply native VMM execution in every phase.
