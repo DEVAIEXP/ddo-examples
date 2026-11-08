@@ -18,7 +18,13 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
-from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
+from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
+from scripts.helpers.ltx2.video_self_attention import (
+    add_video_self_attention_argument,
+    record_attention_adjusted_total,
+    record_nvidia_driver,
+    video_self_attention,
+)
 
 
 def parse_args(argv=None):
@@ -71,7 +77,7 @@ def parse_args(argv=None):
     parser.add_argument("--fused-rms-modulation", action="store_true",
                         help="Preserve the original RMSNorm forward and opt into experimental Triton modulation.")
     parser.add_argument("--fused-rotary-pair", action="store_true",
-                        help="Opt into experimental paired Q/K Triton rotary application.")
+                        help="Fuse Q/K rotary embeddings for eligible video self-attention.")
     parser.add_argument("--compile-repeated-blocks", action="store_true",
                         help="Diagnostic regional Inductor compilation; no CUDA Graphs or eager fallback.")
     parser.add_argument("--compile-eager-rmsnorm", action="store_true",
@@ -98,6 +104,7 @@ def parse_args(argv=None):
     parser.add_argument("--output-type", choices=("video", "latent"), default="video")
     parser.add_argument("--stream-video-decode", action="store_true",
                         help="Opt in to temporal streaming video decode and staged audio VAE/vocoder.")
+    add_video_decoder_argument(parser)
     parser.add_argument("--vae-leaf-offload", action="store_true",
                         help="Opt in to no-stream leaf video VAE decode; preserve audio/vocoder routes.")
     parser.add_argument("--decode-device", choices=("cpu", "cuda:0"), default="cpu",
@@ -147,6 +154,7 @@ def parse_args(argv=None):
         from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("Denoise diagnostics require the native vmm/auto route and a separate diagnostic DLL.")
+    validate_video_decoder(parser, args)
     if args.stream_video_decode and (args.output_type != "video" or args.decode_device != "cuda:0"):
         parser.error("Streaming video decode requires --output-type video --decode-device cuda:0.")
     if args.vae_leaf_offload and not args.stream_video_decode:
@@ -251,7 +259,7 @@ def describe_plan(args):
         "text_encoder_route_requested": "native" if args.text_encoder_native_vmm else "diffusers_group_offload",
         "text_encoder_vmm_resident_weight_budget_gb": args.text_encoder_vmm_resident_weight_budget_gb,
         "output_type": args.output_type, "decode_device": args.decode_device,
-        "stream_video_decode": args.stream_video_decode,
+        "stream_video_decode": args.stream_video_decode, "video_decoder": args.video_decoder,
         "diagnose_denoise": args.diagnose_denoise,
         "diagnose_operators": args.diagnose_operators,
         "diagnose_operator_module": args.diagnose_operator_module if args.diagnose_operators else None,
@@ -487,6 +495,7 @@ def run(args):
                            effective_preset=route.effective_preset,
                            requested_pin_cpu_memory=False, effective_pin_cpu_memory=False)
     metrics = {**describe_plan(args), "events": [], "steps": [], "requested_controls": vars(args).copy()}
+    record_nvidia_driver(metrics)
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -680,15 +689,14 @@ def run(args):
         if args.inplace_residuals:
             transformer.enable_inplace_residuals()
             metrics["inplace_residuals_executed"] = True
-        if args.fused_rms_modulation or args.fused_rotary_pair:
+        if args.fused_rms_modulation:
             from ddo_vmm_allocator.triton_execution import TritonExecutionOps
             execution_ops = TritonExecutionOps()
             transformer.set_execution_ops(
                 rms_modulate=execution_ops.rms_modulate if args.fused_rms_modulation else None,
-                rotary_pair=execution_ops.rotary_pair if args.fused_rotary_pair else None,
             )
             metrics["execution_ops_requested"] = dict(
-                rms_modulation=args.fused_rms_modulation, rotary_pair=args.fused_rotary_pair
+                rms_modulation=True
             )
         if args.feed_forward_chunk_size:
             from scripts.helpers.execution.feed_forward_chunking import enable_feed_forward_chunking
@@ -733,7 +741,10 @@ def run(args):
                     "attention with RoPE executes the explicitly selected fused Q/K normalization instead.")
         result = attach(transformer, "transformer", group=args.fp8_group_offload_control,
                         config=transformer_config if args.transformer_fp8_weight_only and not args.fp8_group_offload_control else None)
-        with result.cleanup_on_error(), video_self_attention(transformer, args.video_self_attention, metrics):
+        with result.cleanup_on_error(), video_self_attention(
+            transformer, args.video_self_attention, metrics,
+            fused_rotary=args.fused_rotary_pair, trace_operators=args.trace_attention_operators,
+        ):
             if args.detach_transformer_auxiliary_cpu_sources:
                 report(result.detach_auxiliary_cpu_sources(enabled=True), "transformer_auxiliary_sources")
             inspect("transformer_attached", transformer)
@@ -822,7 +833,7 @@ def run(args):
                 LTX2VideoStreamingDecoderStep = exports.LTX2VideoStreamingDecoderStep
                 LTX2VideoAudioMelDecoderStep = exports.LTX2VideoAudioMelDecoderStep
                 LTX2VideoVocoderStep = exports.LTX2VideoVocoderStep
-                decoder_stages = [("video", LTX2VideoStreamingDecoderStep(), ["vae"]),
+                decoder_stages = [("video", streaming_video_decoder_step(exports, args.video_decoder), ["vae"]),
                                   ("audio_mel", LTX2VideoAudioMelDecoderStep(), ["audio_vae"]),
                                   ("audio", LTX2VideoVocoderStep(), ["vocoder"])]
             for name, decoder_block, component_names in decoder_stages:
@@ -902,7 +913,18 @@ def run(args):
                 raise error
         raise
     finally:
-        tracker.monitor.stop()
+        active_error = sys.exc_info()[1]
+        monitor_error = None
+        try:
+            tracker.monitor.stop()
+        except Exception as error:
+            metrics["memory_monitor_error"] = repr(error)
+            metrics["memory_peaks_complete"] = False
+            if active_error is None:
+                monitor_error = error
+                metrics["status"], metrics["error"] = "failed", repr(error)
+            else:
+                active_error.add_note("Memory monitor also failed: " + repr(error))
         if fp8_chunk_handle is not None:
             metrics["fp8_feed_forward_reuse"].update(fp8_chunk_handle.snapshot())
         if "execution_ops" in locals():
@@ -910,10 +932,13 @@ def run(args):
         metrics["total_elapsed_sec"] = round(tracker.total_elapsed(), 4)
         metrics["global_peak_vram_gb"] = tracker.global_peak_vram
         metrics["global_peak_ram_gb"] = tracker.global_peak_ram
+        record_attention_adjusted_total(metrics)
         if args.save_metrics:
             metrics_path = output_dir / "metrics" / "modular_run.json"
             metrics_path.parent.mkdir(parents=True, exist_ok=True)
             metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        if monitor_error is not None:
+            raise monitor_error
 
 
 def main():

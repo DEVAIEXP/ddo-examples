@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
+from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
 
 
@@ -25,6 +26,8 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
     add_dynamic_offload_arguments(parser)
     parser.add_argument("--ddo-vmm-library-path")
+    parser.add_argument("--trace-pool-failure", action="store_true",
+                        help="Capture bounded native pool traces on denoise failure.")
     parser.add_argument("--dry-run", action="store_true", help="Print the phase plan without weights, network or CUDA.")
     parser.add_argument("--local-files-only", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--distilled-model", default="OzzyGT/LTX-2.3-Distilled-1.1")
@@ -99,6 +102,7 @@ def parse_args(argv=None):
     parser.add_argument("--output-type", choices=("video", "latent"), default="video")
     parser.add_argument("--stream-video-decode", action="store_true",
                         help="Opt in to temporal streaming video decode and staged audio VAE/vocoder.")
+    add_video_decoder_argument(parser)
     parser.add_argument("--decode-device", choices=("cpu", "cuda:0"), default="cpu",
                         help="CPU is the conservative initial decode; streaming GPU parity is not yet established.")
     parser.add_argument("--output-dir", default=str(ROOT / "outputs" / "ddo_modular_video"))
@@ -140,10 +144,13 @@ def parse_args(argv=None):
             parser.error("Validate regional compilation separately from experimental Triton callbacks.")
     if args.diagnose_operators and (not args.diagnose_denoise or args.steps < 3):
         parser.error("Operator diagnostics require --diagnose-denoise and at least three steps.")
+    if args.trace_pool_failure and (not args.diagnose_denoise or not args.ddo_vmm_library_path):
+        parser.error("--trace-pool-failure requires --diagnose-denoise and --ddo-vmm-library-path.")
     if args.diagnose_denoise:
         from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("Denoise diagnostics require the native vmm/auto route and a separate diagnostic DLL.")
+    validate_video_decoder(parser, args)
     if args.stream_video_decode and (args.output_type != "video" or args.decode_device != "cuda:0"):
         parser.error("Streaming video decode requires --output-type video --decode-device cuda:0.")
     if args.text_encoder_native_vmm:
@@ -246,7 +253,7 @@ def describe_plan(args):
         "text_encoder_route_requested": "native" if args.text_encoder_native_vmm else "diffusers_group_offload",
         "text_encoder_vmm_resident_weight_budget_gb": args.text_encoder_vmm_resident_weight_budget_gb,
         "output_type": args.output_type, "decode_device": args.decode_device,
-        "stream_video_decode": args.stream_video_decode,
+        "stream_video_decode": args.stream_video_decode, "video_decoder": args.video_decoder,
         "diagnose_denoise": args.diagnose_denoise,
         "diagnose_operators": args.diagnose_operators,
         "diagnose_operator_module": args.diagnose_operator_module if args.diagnose_operators else None,
@@ -805,6 +812,17 @@ def run(args, *, activation_capture=None, transformer_setup=None):
                                decode_executed=False)
                 return metrics
             elif args.diagnose_denoise:
+                trace_library = None
+                if args.trace_pool_failure:
+                    import ctypes
+
+                    trace_library = ctypes.CDLL(str(Path(args.ddo_vmm_library_path).resolve()))
+                    if trace_library.ddo_vmm_pool_lifetime_trace_enable_v1() != 0:
+                        raise RuntimeError("Could not enable native pool traces")
+                    start_mapping = trace_library.ddo_vmm_mapping_trace_start_v1
+                    start_mapping.argtypes = (ctypes.c_size_t, ctypes.c_size_t)
+                    if start_mapping(4096, 4096 * 128) != 0:
+                        raise RuntimeError("Could not enable native mapping trace")
                 with result.execution_timer(enabled=True, native_units=True) as execution_timer, result.allocation_diagnostics(enabled=True) as allocation_diagnostics, result.operator_diagnostics(enabled=args.diagnose_operators, module_path=args.diagnose_operator_module, output_dir=output_dir / "operator_traces") as operator_diagnostics, result.metrics_journal(output_dir / "metrics" / "denoise_snapshots", enabled=True) as metrics_journal:
                     metrics_journal.record()
                     def observe_step(index):
@@ -813,10 +831,31 @@ def run(args, *, activation_capture=None, transformer_setup=None):
                         snapshot_path = metrics_journal.record(index)
                         print(f"  [diagnostic] step {index + 1} queued; partial snapshot: {snapshot_path}", flush=True)
                     payload["callback_on_step_end"] = observe_step
+                    rotary_probe = None
                     try:
+                        if trace_library is not None:
+                            rotary_probe = observe_split_rotary(transformer, metrics)
                         invoke_stage(current_pipe, payload, device, retain={"latents", "audio_latents"},
                                      execution_mode=denoise_execution_mode(args), execution_report=denoise_context_report)
+                    except Exception as error:
+                        if trace_library is not None:
+                            try:
+                                metrics["denoise_pool_traces"] = capture_pool_traces(trace_library)
+                                metrics["denoise_mapping_trace"] = capture_mapping_trace(trace_library)
+                            except Exception as trace_error:
+                                metrics["denoise_pool_trace_error"] = repr(trace_error)
+                                error.add_note("Pool trace capture also failed: " + repr(trace_error))
+                        try:
+                            metrics["denoise_failure_snapshot"] = result.metrics_snapshot(
+                                collect_completed=False,
+                            ).as_dict()
+                        except Exception as snapshot_error:
+                            metrics["denoise_failure_snapshot_error"] = repr(snapshot_error)
+                            error.add_note("Denoise failure snapshot also failed: " + repr(snapshot_error))
+                        raise
                     finally:
+                        if rotary_probe is not None:
+                            rotary_probe()
                         payload.pop("callback_on_step_end", None)
             else:
                 invoke_stage(current_pipe, payload, device, retain={"latents", "audio_latents"},
@@ -887,7 +926,7 @@ def run(args, *, activation_capture=None, transformer_setup=None):
                 LTX2VideoStreamingDecoderStep = exports.LTX2VideoStreamingDecoderStep
                 LTX2VideoAudioMelDecoderStep = exports.LTX2VideoAudioMelDecoderStep
                 LTX2VideoVocoderStep = exports.LTX2VideoVocoderStep
-                decoder_stages = [("video", LTX2VideoStreamingDecoderStep(), ["vae"]),
+                decoder_stages = [("video", streaming_video_decoder_step(exports, args.video_decoder), ["vae"]),
                                   ("audio_mel", LTX2VideoAudioMelDecoderStep(), ["audio_vae"]),
                                   ("audio", LTX2VideoVocoderStep(), ["vocoder"])]
             for name, decoder_block, component_names in decoder_stages:
@@ -945,6 +984,8 @@ def run(args, *, activation_capture=None, transformer_setup=None):
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics["status"], metrics["error"] = "failed", repr(error)
+        if "allocation_diagnostics" in locals():
+            metrics["denoise_allocation_diagnostics"] = allocation_diagnostics.snapshot()
         from scripts.helpers.failure_reporting import report_memory_failure
         report_memory_failure(error, metrics)
         # The error context retains failed native ownership when retirement is unsafe.
@@ -966,6 +1007,78 @@ def run(args, *, activation_capture=None, transformer_setup=None):
             metrics_path = output_dir / "metrics" / "modular_run.json"
             metrics_path.parent.mkdir(parents=True, exist_ok=True)
             metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+
+def observe_split_rotary(transformer, metrics):
+    from collections import deque
+
+    module = sys.modules[type(transformer).__module__]
+    original = module.apply_split_rotary_emb
+    recent = deque(maxlen=8)
+    observation = {"recent": recent}
+
+    def describe(tensor):
+        return {"address": tensor.data_ptr(), "shape": list(tensor.shape),
+                "stride": list(tensor.stride()), "dtype": str(tensor.dtype)}
+
+    def observed(x, freqs):
+        row = {"input": describe(x), "cos": describe(freqs[0]), "sin": describe(freqs[1])}
+        recent.append(row)
+        try:
+            return original(x, freqs)
+        except Exception:
+            observation["raised"] = row
+            raise
+
+    def restore():
+        module.apply_split_rotary_emb = original
+        metrics["denoise_split_rotary_operands"] = {**observation, "recent": list(recent)}
+
+    module.apply_split_rotary_emb = observed
+    return restore
+
+
+def capture_mapping_trace(library):
+    import ctypes
+
+    capacity, width = 4096, 16
+    snapshot = library.ddo_vmm_mapping_trace_snapshot_v1
+    snapshot.argtypes = (ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t,
+                         ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t)
+    snapshot.restype = ctypes.c_int
+    header = (ctypes.c_uint64 * width)()
+    rows = (ctypes.c_uint64 * (capacity * width))()
+    status = snapshot(header, len(header), rows, capacity)
+    if status or header[0] != 1 or header[2] != capacity or header[3] > capacity:
+        return {"status": "unavailable", "native_status": status, "header": list(header)}
+    return {
+        "header": list(header), "dropped": header[4], "in_flight": header[5],
+        "rows": [rows[i:i + width] for i in range(0, header[3] * width, width)],
+    }
+
+
+def capture_pool_traces(library):
+    import ctypes
+
+    capacity, width = 8192, 13
+    traces = {}
+    for kind in ("lifetime", "dependency"):
+        snapshot = getattr(library, f"ddo_vmm_pool_{kind}_trace_snapshot_v1")
+        snapshot.argtypes = (ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t,
+                             ctypes.POINTER(ctypes.c_uint64), ctypes.c_size_t)
+        snapshot.restype = ctypes.c_int
+        report = (ctypes.c_uint64 * 4)()
+        rows = (ctypes.c_uint64 * (capacity * width))()
+        status = snapshot(report, len(report), rows, capacity)
+        if status or tuple(report[:2]) != (1, 1) or not report[3] <= min(report[2], capacity):
+            traces[kind] = {"status": "unavailable", "native_status": status, "header": list(report)}
+            continue
+        traces[kind] = {
+            "schema": report[0], "total": report[2], "retained": report[3],
+            "dropped": report[2] - report[3],
+            "rows": [rows[i:i + width] for i in range(0, report[3] * width, width)],
+        }
+    return traces
 
 
 def main():

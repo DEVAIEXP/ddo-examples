@@ -88,6 +88,7 @@ fused RMS/rotary kernels belong in the [diagnostics entry](../developer/diagnost
 | --- | --- |
 | `--decode-device` | `cpu`; choose `cuda:0` explicitly for GPU decoding. |
 | `--stream-video-decode` | Off; temporal window decoding requires `--decode-device cuda:0`. |
+| `--video-decoder` | `streaming-tiles`; used with `--stream-video-decode`. `streaming-tiles` decodes overlapping temporal windows and blends them. `exact-streaming` runs the VAE decoder over the whole sequence in temporal streaming, without window seams or overlap recomputation; it needs custom blocks that export `LTX2VideoExactStreamingDecoderStep` and a VAE without decoder timestep conditioning. |
 | `--vae-leaf-offload` | Off, VMM only; requires GPU streaming. Audio VAE and vocoder routes stay separate. |
 | `--output-type` | `video`, VMM only; `latent` skips output decoding and cannot be combined with streaming. |
 | `--output-dir` | `outputs/ddo_modular_video`, or `outputs/ddo_modular_sdnq_video` for SDNQ. |
@@ -114,11 +115,16 @@ GPU or performance acceptance.
 ## Video self-attention backend
 
 All LTX video runners accept `--video-self-attention` with `default`,
-`flash-attn2`, or `sol-attn`. The default preserves the model's configured
-attention. `flash-attn2` uses the optional external FlashAttention 2 package.
-`sol-attn` uses Triton Sol-Attn (`diag`, `tau=1.0`) and uses FlashAttention 2
-for the first transformer block. These choices apply only to eligible video
-self-attention. Audio, cross-attention, and masked or perturbed calls retain
+`flash-attn2`, `sol-attn`, or `cudnn`. The default preserves the model's
+configured attention. `flash-attn2` uses the optional external FlashAttention 2
+package. `sol-attn` uses Triton Sol-Attn (`diag`, `tau=1.0`) and uses
+FlashAttention 2 for the first transformer block. `cudnn` keeps PyTorch scaled
+dot-product attention but sets the backend priority to flash, cuDNN,
+memory-efficient, math; it needs no extra package. PyTorch builds without
+flash attention, such as the Windows wheels, then use cuDNN attention for
+eligible inputs instead of the memory-efficient kernel, and fall back to the
+remaining backends when cuDNN is not eligible. These choices apply only to
+eligible video self-attention. Audio, cross-attention, and masked or perturbed calls retain
 their original routes. Saved metrics include per-layer dispatch counts.
 
 Install the optional FlashAttention 2 wheel as described in [Setup](setup.md).

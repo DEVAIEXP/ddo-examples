@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
+from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
 
 
@@ -46,6 +47,7 @@ def parse_args(argv=None):
     parser.add_argument("--memory-monitor", choices=("rss", "full"), default="rss")
     parser.add_argument("--stream-video-decode", action="store_true",
                         help="Use temporal GPU video streaming and separate audio VAE/vocoder stages.")
+    add_video_decoder_argument(parser)
     parser.add_argument("--decode-device", choices=("cpu", "cuda:0"), default="cpu",
                         help="Explicit decode device; CPU fallback preserves the existing default.")
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
@@ -61,6 +63,7 @@ def parse_args(argv=None):
         parser.error("Use dimensions divisible by 32, positive finite duration/fps and 1-8 steps.")
     if args.use_audio_condition and not args.audio:
         parser.error("--use-audio-condition requires --audio.")
+    validate_video_decoder(parser, args)
     if args.stream_video_decode and args.decode_device != "cuda:0":
         parser.error("Streaming video decode requires --decode-device cuda:0.")
     return args
@@ -125,7 +128,7 @@ def main():
         print(json.dumps({"runner": Path(__file__).stem, "backend": args.ddo_backend,
                           "preset": args.ddo_preset, "width": args.width, "height": args.height,
                           "num_frames": frames, "steps": args.steps, "seed": args.seed,
-                          "decode_device": args.decode_device, "stream_video_decode": args.stream_video_decode,
+                          "decode_device": args.decode_device, "stream_video_decode": args.stream_video_decode, "video_decoder": args.video_decoder,
                           "phases": ["text_encoder", "connectors", "video_encoder", "audio_encoder",
                                      "prepare", "denoise", "trim", "decode"]}, indent=2))
         return
@@ -328,11 +331,11 @@ def main():
         decoder_stages = [("video", stages["decode"].sub_blocks["video"], ["vae"]),
                           ("audio", stages["decode"].sub_blocks["audio"], ["audio_vae", "vocoder"])]
         if args.stream_video_decode:
-            decoder_stages = [("video", exports.LTX2VideoStreamingDecoderStep(), ["vae"]),
+            decoder_stages = [("video", streaming_video_decoder_step(exports, args.video_decoder), ["vae"]),
                               ("audio_mel", exports.LTX2VideoAudioMelDecoderStep(), ["audio_vae"]),
                               ("audio", exports.LTX2VideoVocoderStep(), ["vocoder"])]
         metrics["decode_route"] = {"device": args.decode_device,
-                                   "stream_video_decode": args.stream_video_decode,
+                                   "stream_video_decode": args.stream_video_decode, "video_decoder": args.video_decoder,
                                    "planned_stages": [name for name, _, _ in decoder_stages],
                                    "completed_stages": []}
         for name, decoder_block, component_names in decoder_stages:
