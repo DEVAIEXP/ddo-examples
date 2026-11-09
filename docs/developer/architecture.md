@@ -59,8 +59,9 @@ the selected route requires it.
    DDO does not infer the workload shape.
 7. **Modular denoise.** Executes the model's modular schedule and forward calls,
    using the prepared conditioning and selected offload route. The VMM entries
-   wrap it in `profile_run()`; with `--build-ddo-profile` (use `--steps 1`) DDO
-   measures this region, saves the budget and the runner stops before decode.
+   wrap it in `profile_run()`; with `--build-ddo-profile` (run twice with
+   `--steps 2`: floor, then hardware ceiling) DDO measures this region, saves the
+   result and the runner stops before decode.
 8. **Transformer retirement.** Reads back the required latents and releases
    transformer references after the required CUDA work completes. A host callback
    returning does not prove GPU completion, and unloading a component does not
