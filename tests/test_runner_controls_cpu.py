@@ -527,7 +527,8 @@ def test_video_native_capacity_defaults_and_diagnostic_separation(monkeypatch):
     path = PUBLIC_VIDEO[-1]
     monkeypatch.setattr(sys, "argv", [str(path)])
     args = parser_body(path)()
-    assert args.ddo_vmm_resident_weight_budget_gb == 4
+    # Omitted: DDO resolves it from a VMM residency profile or the structural floor.
+    assert args.ddo_vmm_resident_weight_budget_gb is None
     assert args.ddo_vmm_total_staging_gb is None
     assert args.ddo_vmm_staging_buffer_gb == .625
     assert args.ddo_vmm_source_cache_gb == args.ddo_vmm_source_registered_gb == 0

@@ -21,6 +21,7 @@ from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 from scripts.helpers.ltx2.text_encoder import (
     add_text_encoder_arguments, build_text_encoder_config, load_text_encoder_for_phase, resolve_text_encoder_route,
 )
+from scripts.helpers.ltx2.vmm_profile import add_vmm_profile_arguments, resolve_vmm_profile
 from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import (
     add_video_self_attention_argument,
@@ -118,8 +119,10 @@ def parse_args(argv=None):
     configure_parser(parser, "vmm")
     add_lora_arguments(parser)
     add_video_self_attention_argument(parser)
-    args = parse_common_arguments(parser, argv, canonical_video=True)
+    add_vmm_profile_arguments(parser)
+    args = parse_common_arguments(parser, argv, canonical_video=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
+    resolve_vmm_profile(parser, args, round(args.seconds * args.frame_rate) // 8 * 8 + 1)
     args.runner_entrypoint = "vmm"
     if args.compile_triton_execution:
         if not (args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
@@ -514,6 +517,8 @@ def run(args):
 
     def attach(module, name, group=False, config=None):
         component_config = {"config": config} if config is not None else {}
+        if name == "transformer" and args.ddo_profile and not group:
+            component_config.update(profile_name=args.ddo_profile, build_profile=args.build_ddo_profile)
         result = enable_offload(module, settings=settings, component=name,
                                 route="diffusers_group_offload" if group else (
                                     "dynamic_offload" if args.ddo_backend == "vmm" else None),
@@ -729,8 +734,12 @@ def run(args):
                     finally:
                         payload.pop("callback_on_step_end", None)
             else:
-                invoke_stage(current_pipe, payload, device, retain={"latents", "audio_latents"},
-                             execution_mode=denoise_execution_mode(args), execution_report=denoise_context_report)
+                # A VMM residency profile build measures this region (DDO no-op otherwise).
+                with result.profile_run() as profile_report:
+                    invoke_stage(current_pipe, payload, device, retain={"latents", "audio_latents"},
+                                 execution_mode=denoise_execution_mode(args), execution_report=denoise_context_report)
+                if args.ddo_profile:
+                    metrics["ddo_profile"] = profile_report
             torch.cuda.synchronize(device)
             if args.compile_repeated_blocks:
                 metrics["regional_compile"]["denoise_completed"] = True
@@ -769,6 +778,12 @@ def run(args):
             handle.remove()
         chunk_handles.clear()
         del result, transformer, scheduler
+        if args.build_ddo_profile:
+            # The profile is saved; decode would not change the measured budget.
+            metrics.update(status="completed", operation="vmm_residency_profile_build")
+            purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
+            print(f"VMM residency profile build complete: {metrics.get('ddo_profile')}", flush=True)
+            return
         # Keep only the generated states and decode metadata past native retirement.
         keep = {"latents", "audio_latents", "base_token_count", "audio_ref_num_tokens", "audio_num_frames",
                 "height", "width", "num_frames", "dtype", "batch_size", "generator", "seed"}

@@ -19,7 +19,7 @@ for lifecycle and reporting semantics.
 | Other native encoder/VAE controls | No | No | Yes | No |
 | `--bits` | No | No | No | Yes |
 | `--metrics-level` | No | No | Yes | No |
-| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes | No | No |
+| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | Yes (VMM residency profile, `NAME` or `auto`) | No |
 
 Unsupported options are rejected, including abbreviated names. Backend and
 preset selection do not change the input audio or decode device automatically.
@@ -54,7 +54,9 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 | Control | Default and meaning |
 | --- | --- |
 | `--ddo-backend`, `--ddo-preset` | `vmm`, `auto`; experimental native fast. `nvme_baseline` selects the protected NVMe route. |
-| `--ddo-vmm-resident-weight-budget-gb` | 4 GiB; active transformer weight capacity. |
+| `--ddo-vmm-resident-weight-budget-gb` | Omitted: the saved VMM residency profile selected by `--ddo-profile`, otherwise DDO's structural floor (two execution slots plus 64 MiB). An explicit value is authoritative. Active transformer weight capacity (execution slots plus arena). |
+| `--ddo-profile NAME\|auto` | Off. VMM residency profile for `vmm/auto`. `auto` names it `ltx23-video-<W>x<H>-<frames>f-<digest>` from resolution, frames and activation-relevant options (chunking, attention, phase/residual/timestep options, audio condition, sequence length). DDO adds model, machine RAM/VRAM and native library identity. |
+| `--build-ddo-profile` | Off. With `--ddo-profile`: measure the denoise (use `--steps 1`), save the recommended budget and stop before decode. Later runs with the same profile and no explicit budget use it. |
 | `--ddo-vmm-total-staging-gb` | Omitted: native fast uses 0.625 GiB total host staging; NVMe uses two 0.625 GiB slots. Explicit values specify total staging for either route. |
 | `--ddo-vmm-source-cache-gb` | 0; native retained-source cache disabled. |
 | `--ddo-vmm-source-registered-gb` | 0; native registered-source ceiling inherits the source-storage ceiling. |
@@ -63,6 +65,17 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native text encoder; encoder-only capacity, separate from the transformer ceiling. Two execution slots of the largest encoder component must fit (0.625 GiB is refused at attachment). Rejected when the native text encoder is off. |
 | `--transformer-fp8-weight-only` | Off; load supported saved TorchAO FP8 weights. Requires native fast, a local `--model-path` and `--local-files-only`; does not convert BF16 weights. |
 | `--release-pytorch-host-cache-before-transformer` | Off; request PyTorch host-cache release at the phase boundary. Separate from Windows standby purge and native source-cache capacity. |
+
+VMM residency profile example (build once, then reuse):
+
+```powershell
+python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto --build-ddo-profile --steps 1 <workload arguments>
+python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto <same workload arguments>
+```
+
+The build and use runs must share the workload arguments that `auto` digests;
+DDO also reports a first-forward shape mismatch. The recorded benchmark recipes
+keep their explicit 0.625 GiB budget until the profile is validated on GPU.
 
 The native text encoder default comes from one Windows LTX 2.3 video 8 s
 1280x704 pair with a cold standby cache in both runs: encoder phase 11.2 s

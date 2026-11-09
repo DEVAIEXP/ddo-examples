@@ -143,7 +143,8 @@ def parse_common_arguments(parser, argv=None, *, purge_phases=("before_run", "af
         if args.ddo_profile and args.ddo_preset not in (
             "auto", "one_shot_fast", "low_ram_safe", "warm_process", "wsl_compat"
         ):
-            parser.error("Workload profiles require a linear DDO preset, not a compatibility/off route")
+            parser.error("Workload profiles require a linear DDO preset or vmm/auto, "
+                         "not a compatibility/off route or the NVMe baseline")
     if getattr(args, "ddo_vmm_execution_backing_reclaim", False) and (
         args.ddo_backend != "vmm" or args.ddo_preset != "auto"
     ):
