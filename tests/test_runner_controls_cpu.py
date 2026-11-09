@@ -79,6 +79,16 @@ def parser_body(path):
     return namespace["parse_args"]
 
 
+def test_qwen_vmm_single_frame_default_and_explicit_original_decoder():
+    parse = parser_body(ROOT / "scripts/qwen_image_21/run_dynamic_modular_vmm.py")
+    assert parse([]).vae_no_temporal_cache
+    assert parse(["--vae-no-temporal-cache"]).vae_no_temporal_cache
+    assert not parse(["--no-vae-no-temporal-cache"]).vae_no_temporal_cache
+    assert parse(["--vae-tiling"]).vae_tiling
+    with pytest.raises(SystemExit):
+        parse(["--no-vae-no-temporal-cache", "--vae-alias-residuals"])
+
+
 def test_linear_video_recorded_computation_defaults_and_opt_outs():
     parse = parser_body(ROOT / "scripts/ltx2_video/run_dynamic_modular_distilled.py")
     args = parse(["--audio", "conditioning.mp3", "--use-audio-condition"])

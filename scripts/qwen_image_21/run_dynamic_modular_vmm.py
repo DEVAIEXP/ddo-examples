@@ -80,7 +80,8 @@ def parse_args(argv=None):
         help="Explicit VAE GPU weight ceiling, independent of the transformer.",
     )
     parser.add_argument(
-        "--vae-no-temporal-cache", action="store_true", help="Opt-in local untiled single-frame decode."
+        "--vae-no-temporal-cache", action=argparse.BooleanOptionalAction, default=True,
+        help="Use the local untiled single-frame decode by default; disable for the original decoder. Tiling takes precedence."
     )
     parser.add_argument("--output-dir", type=Path, default=ROOT / "outputs/qwen_image_21_vmm")
     parser.add_argument(

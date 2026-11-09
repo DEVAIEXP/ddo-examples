@@ -75,6 +75,46 @@ the separate diagnostic entry.
 Turbo uses its saved sampling schedule, not an arbitrary base step count.
 Do not substitute Turbo in a base benchmark.
 
+### Single-frame 1024-square recipe
+
+For the tested Windows 8 GiB GPU, the recommended 1024-square decode setting is
+`--vae-no-temporal-cache`. It avoids video temporal-cache work for a single
+image. The measured decode was 1.33 s versus 3.08 s for the original path,
+with absolute full-run GPU peak 6.54 versus 8.00 GiB and an identical PNG.
+These are single observations for this workload, not a general fit guarantee.
+
+The [VAE feature comparison](../benchmarks/qwen-image-21-features.md) shows all
+six combinations, their decode and full-run peaks, timings and image checks.
+Use the reviewed local custom-block checkout for this development recipe:
+
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular_vmm.py `
+  --local-files-only --variant base --width 1024 --height 1024 --steps 20 --seed 42 `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
+  --text-encoder-native-vmm `
+  --ddo-vmm-total-staging-gb 0.625 `
+  --ddo-vmm-source-cache-gb 16 --ddo-vmm-source-registered-gb 16 `
+  --vae-resident --vae-no-temporal-cache --attention-backend default `
+  --no-ddo-vmm-execution-backing-reclaim `
+  --no-purge-before-run --purge-after-text-encoder --purge-before-transformer --no-purge-after-run `
+  --memory-monitor rss --metrics-level 2 --show-metrics --save-metrics `
+  --output-dir outputs/qwen_single_frame_1024
+```
+
+The measurement used custom blocks at `cd1efe4` and a fresh `DDO_PROFILE_DIR`
+(no profile build), selecting the 0.625 GiB structural floor. An existing saved
+profile can change the residency budget; use a fresh profile directory when
+reproducing this comparison. Single-frame decode is enabled by default in this
+VMM runner; the flag is shown explicitly for readability. Use
+`--no-vae-no-temporal-cache` to select the original decoder. Tiling takes
+precedence; alias and band decode remain optional.
+
+For additional headroom, add `--vae-alias-residuals`; add `--vae-band-rows 256`
+as well for the measured 3.50 GiB peak while preserving the selected image.
+Band decode requires the local custom-block revision described in the comparison.
+Tiling is an alternative with a measured image difference.
+
 ## Runtime and preset selection
 
 See [presets](presets.md). The encoder and VAE can use different strategies from

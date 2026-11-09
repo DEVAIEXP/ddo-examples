@@ -51,8 +51,24 @@ PSNR is computed over the saved RGB PNGs; it does not establish visual acceptanc
 Bands 256 saved 4.50 GiB of sampled absolute peak against the control while
 preserving this output exactly. Bands 128 did not lower the sampled peak further.
 Their larger total was mainly in denoise (55.30 versus 50.17 s), before the
-modified decode; it cannot be attributed to band size. No defaults changed.
+modified decode; it cannot be attributed to band size.
 These results do not establish parity at other resolutions or for video.
+
+### Choose a decode configuration
+
+For the tested 1024-square recipe on an 8 GiB GPU, start with
+`--vae-no-temporal-cache`: it had the shortest observed decode, preserved the
+control PNG exactly and left about 1.46 GiB below the GPU's nominal capacity.
+This is now the VMM runner's default decode setting. It is not a memory-fit
+guarantee when other applications use the GPU. The original decoder remains
+available with `--no-vae-no-temporal-cache`; linear and SDNQ defaults are unchanged.
+
+If more memory headroom matters, add `--vae-alias-residuals`; add
+`--vae-band-rows 256` as well for the measured 3.50 GiB full-run peak.
+Both combinations preserved the selected output exactly. Band rows 128
+offered no additional sampled peak benefit. Tiling reduced decode memory
+further but changed the image, so it remains a separate quality tradeoff.
+See the [1024-square usage recipe](../user/qwen-image-21.md#single-frame-1024-square-recipe).
 
 ### Reproduction controls
 
@@ -65,12 +81,12 @@ This development revision is not implied to be available from the Hub.
 
 | Variant | Additional flags |
 | --- | --- |
-| Control | None |
+| Control | `--no-vae-no-temporal-cache` |
 | Single-frame | `--vae-no-temporal-cache` |
 | Alias | `--vae-no-temporal-cache --vae-alias-residuals` |
 | Bands 256 | `--vae-no-temporal-cache --vae-alias-residuals --vae-band-rows 256` |
 | Bands 128 | `--vae-no-temporal-cache --vae-alias-residuals --vae-band-rows 128` |
-| Tiling only | `--vae-tiling` |
+| Tiling only | `--vae-tiling --no-vae-no-temporal-cache` |
 
 Band rows used two final decoder blocks and the module-derived halo of 11
 input rows. Tiling did not enable single-frame, alias or band decode.
