@@ -46,6 +46,16 @@ def test_native_text_encoder_default_and_its_own_ceiling(monkeypatch, parse, def
     assert parse(monkeypatch, ["--no-text-encoder-native-vmm"]).text_encoder_native_vmm is False
 
 
+def test_native_encoder_config_enables_native_transport():
+    # Component ownership is refused without native transport (Qwen's generic config has it off).
+    from diffusers_dynamic_offloader import DynamicOffloadConfig
+    from scripts.helpers.text_encoder_route import native_text_encoder_config
+
+    config = native_text_encoder_config(DynamicOffloadConfig(vmm_native_transport=False), 4.0)
+    assert config.vmm_native_transport is True and config.vmm_component_tensor_ownership is True
+    assert config.vmm_resident_weight_budget_gb == 4.0 and config.profile_name is None
+
+
 def test_ltx_image_keeps_leaf_with_explicit_compatibility_or_other_routes(monkeypatch):
     assert ltx_image(monkeypatch, ["--text-encoder-group-offload"]).text_encoder_native_vmm is False
     assert ltx_image(monkeypatch, ["--ddo-preset", "nvme_baseline"]).text_encoder_native_vmm is False

@@ -53,7 +53,10 @@ def native_text_encoder_config(base_config, budget_gb):
     """Component-ownership config for a native encoder; transformer limits unchanged."""
     from dataclasses import replace
 
+    # Component ownership requires native transport even when the transformer
+    # route runs without it (generic CLI configs without a retained source).
     return replace(base_config, vmm_resident_weight_budget_gb=budget_gb, vmm_module_pattern=".*", vmm_page_mb=2,
+                   vmm_native_transport=True,
                    vmm_component_tensor_ownership=True, vmm_component_buffer_limit_mb=1,
                    vmm_execution_auxiliary_ownership=False, vmm_float8_weight_only=False,
                    profile_name=None, build_profile=False)
