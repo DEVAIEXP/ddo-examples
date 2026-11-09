@@ -6,6 +6,8 @@ __pycache__/
 .hf_modules*/
 outputs/
 .internal/
+/benchmarks/inputs/*
+!/benchmarks/inputs/README.md
 modular_diffusers/custom_blocks/
 .env
 *.log

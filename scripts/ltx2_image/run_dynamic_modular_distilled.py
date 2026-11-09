@@ -3,6 +3,7 @@ Local low-VRAM parity runner for the experimental LTX 2.3 distilled modular T2I 
 """
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 import sys
@@ -16,15 +17,6 @@ os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modu
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
-from diffusers_dynamic_offloader import (
-    DynamicOffloadSettings,
-    enable_offload,
-    format_dynamic_offload_presets,
-    from_pretrained_with_dynamic_offload,
-    is_wsl_environment,
-    maybe_purge_windows_standby_cache,
-    remove_dynamic_offload,
-)
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
@@ -102,13 +94,14 @@ def parse_optional_float(value: str | None) -> float | None:
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
-def parse_args():
+def parse_args(*, official_leaf=False):
     from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
 
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
-    parser.add_argument("--ddo-preset", dest="preset", default="auto")
+    if not official_leaf:
+        parser.add_argument("--ddo-preset", dest="preset", default="auto")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--prompt", default=prompt)
     parser.add_argument("--negative-prompt", default=negative_prompt)
@@ -138,10 +131,17 @@ def parse_args():
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
     parser.add_argument("--low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=MODEL_LOW_CPU_MEM_USAGE)
     parser.add_argument("--text-encoder-low-cpu-mem-usage", action=argparse.BooleanOptionalAction, default=TEXT_ENCODER_LOW_CPU_MEM_USAGE)
-    parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--text-encoder-dynamic-offload", action=argparse.BooleanOptionalAction, default=None)
+    if not official_leaf:
+        parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=None)
+        parser.add_argument("--text-encoder-dynamic-offload", action=argparse.BooleanOptionalAction, default=None)
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, canonical_image=True, workload_profiles=True)
+    if official_leaf:
+        parser.add_argument("--memory-monitor", choices=("rss", "full"), default="rss")
+        parser.add_argument("--no-stream-offload", action="store_true")
+        parser.set_defaults(output_dir="outputs/ltx23_image_diffusers_leaf")
+        args = parser.parse_args()
+    else:
+        args = parse_common_arguments(parser, canonical_image=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
     return args
 
@@ -228,7 +228,7 @@ def denoise_progress_callback(components, step_index, timestep, callback_kwargs)
     return callback_kwargs
 
 
-def main():
+def main(*, official_leaf=False):
     global RUNNING_ON_WSL, DEVICE, MODEL_PATH, TEXT_ENCODER_LOW_CPU_MEM_USAGE, MODEL_LOW_CPU_MEM_USAGE
     global DYNAMIC_OFFLOAD_SETTINGS, REQUESTED_DYNAMIC_OFFLOAD_PRESET, DYNAMIC_OFFLOAD_PRESET
     global TEXT_ENCODER_GROUP_OFFLOAD, TEXT_ENCODER_DYNAMIC_OFFLOAD, TRANSFORMER_MEMORY_MANAGER
@@ -241,7 +241,7 @@ def main():
     global FAKE_PROMPT_EMBEDS, GENERATION_REPEATS, TRANSFORMER_PREPARE_REPEATS
     global prompt, negative_prompt
 
-    args = parse_args()
+    args = parse_args(official_leaf=official_leaf)
     custom, custom_blocks_metadata = load_custom_blocks(args)
     LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
     LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
@@ -254,7 +254,12 @@ def main():
     if args.build_ddo_profile and not args.ddo_profile:
         raise SystemExit("--build-ddo-profile requires --ddo-profile NAME")
 
-    RUNNING_ON_WSL = is_wsl_environment()
+    if not official_leaf:
+        from diffusers_dynamic_offloader import (
+            DynamicOffloadSettings, enable_offload, format_dynamic_offload_presets,
+            from_pretrained_with_dynamic_offload, is_wsl_environment, remove_dynamic_offload,
+        )
+        RUNNING_ON_WSL = is_wsl_environment()
     if args.print_presets:
         print(format_dynamic_offload_presets(default_preset=args.preset, running_on_wsl=RUNNING_ON_WSL))
         return
@@ -276,32 +281,33 @@ def main():
         "execution_device": DEVICE,
         "offload_device": OFFLOAD_DEVICE,
         "running_on_wsl": RUNNING_ON_WSL,
-        "default_preset": args.preset,
+        "default_preset": None if official_leaf else args.preset,
         "environ": settings_environ,
     }
 
-    DYNAMIC_OFFLOAD_SETTINGS = DynamicOffloadSettings.from_env(**settings_kwargs)
-    REQUESTED_DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.requested_preset
-    DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.effective_preset
-    DYNAMIC_OFFLOAD_CONFIG = DYNAMIC_OFFLOAD_SETTINGS.config
-    DYNAMIC_OFFLOAD_EXECUTION_MODE = DYNAMIC_OFFLOAD_CONFIG.execution_mode
-    DYNAMIC_OFFLOAD_PIN_CPU_MEMORY = DYNAMIC_OFFLOAD_SETTINGS.requested_pin_cpu_memory
-    DYNAMIC_OFFLOAD_SHOW_PROFILE = DYNAMIC_OFFLOAD_CONFIG.show_profile
-    DYNAMIC_OFFLOAD_EFFECTIVE_PIN_CPU_MEMORY = DYNAMIC_OFFLOAD_SETTINGS.effective_pin_cpu_memory
+    if not official_leaf:
+        DYNAMIC_OFFLOAD_SETTINGS = DynamicOffloadSettings.from_env(**settings_kwargs)
+        REQUESTED_DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.requested_preset
+        DYNAMIC_OFFLOAD_PRESET = DYNAMIC_OFFLOAD_SETTINGS.effective_preset
+        DYNAMIC_OFFLOAD_CONFIG = DYNAMIC_OFFLOAD_SETTINGS.config
+        DYNAMIC_OFFLOAD_EXECUTION_MODE = DYNAMIC_OFFLOAD_CONFIG.execution_mode
+        DYNAMIC_OFFLOAD_PIN_CPU_MEMORY = DYNAMIC_OFFLOAD_SETTINGS.requested_pin_cpu_memory
+        DYNAMIC_OFFLOAD_SHOW_PROFILE = DYNAMIC_OFFLOAD_CONFIG.show_profile
+        DYNAMIC_OFFLOAD_EFFECTIVE_PIN_CPU_MEMORY = DYNAMIC_OFFLOAD_SETTINGS.effective_pin_cpu_memory
 
     TEXT_ENCODER_GROUP_OFFLOAD = (
-        args.text_encoder_group_offload
+        True if official_leaf else args.text_encoder_group_offload
         if args.text_encoder_group_offload is not None
         else parse_bool_preset_env("DDO_RUNNER_TEXT_ENCODER_GROUP_OFFLOAD", "1")
     )
     TEXT_ENCODER_DYNAMIC_OFFLOAD = (
-        args.text_encoder_dynamic_offload
+        False if official_leaf else args.text_encoder_dynamic_offload
         if args.text_encoder_dynamic_offload is not None
         else parse_bool_preset_env("DDO_RUNNER_TEXT_ENCODER_DYNAMIC_OFFLOAD")
     )
-    TRANSFORMER_MEMORY_MANAGER = preset_env("DDO_RUNNER_TRANSFORMER_MEMORY_MANAGER", "off").lower()
+    TRANSFORMER_MEMORY_MANAGER = "off" if official_leaf else preset_env("DDO_RUNNER_TRANSFORMER_MEMORY_MANAGER", "off").lower()
     PRE_VAE_CLEANUP_REPEATS = (
-        args.pre_vae_cleanup_repeats
+        1 if official_leaf else args.pre_vae_cleanup_repeats
         if args.pre_vae_cleanup_repeats is not None
         else int(preset_env("DDO_RUNNER_PRE_VAE_CLEANUP_REPEATS", "3" if RUNNING_ON_WSL else "1"))
     )
@@ -372,7 +378,9 @@ def main():
         "show_metrics": SHOW_METRICS,
         "save_metrics": SAVE_METRICS,
         "transformer_memory_manager": TRANSFORMER_MEMORY_MANAGER,
-        **DYNAMIC_OFFLOAD_SETTINGS.as_metrics(),
+        **({"offload": {"backend": "diffusers", "offload_type": "leaf_level",
+                       "use_stream": not args.no_stream_offload}}
+           if official_leaf else DYNAMIC_OFFLOAD_SETTINGS.as_metrics()),
         "pre_vae_cleanup_repeats": PRE_VAE_CLEANUP_REPEATS,
         "events": [],
         "steps": [],
@@ -392,7 +400,8 @@ def main():
         if TEXT_ENCODER_GROUP_OFFLOAD
         else "cuda_to"
     )
-    transformer_route = "dynamic_offload" if DYNAMIC_OFFLOAD_SETTINGS.enabled else "standard"
+    transformer_route = ("diffusers_group_offload" if official_leaf else
+                         "dynamic_offload" if DYNAMIC_OFFLOAD_SETTINGS.enabled else "standard")
     print(
         "  [runner] "
         f"text_encoder_route={text_encoder_route} "
@@ -409,7 +418,22 @@ def main():
     step_start = tracker.step_start
     step_end = tracker.step_end
 
-    run_metrics["purge_windows_standby_before_run"] = purge_for_runner(args,
+    def purge(*purge_args, **kwargs):
+        if not official_leaf:
+            return purge_for_runner(*purge_args, **kwargs)
+
+    def attach_leaf(module, low_cpu_mem_usage, event_name):
+        from diffusers.hooks.group_offloading import apply_group_offloading
+
+        start = time.perf_counter()
+        apply_group_offloading(
+            module, onload_device=torch.device(DEVICE), offload_device=torch.device(OFFLOAD_DEVICE),
+            offload_type="leaf_level", use_stream=not args.no_stream_offload,
+            low_cpu_mem_usage=low_cpu_mem_usage and not args.no_stream_offload, record_stream=False,
+        )
+        record_event(event_name, time.perf_counter() - start)
+
+    run_metrics["purge_windows_standby_before_run"] = purge(args,
         DYNAMIC_OFFLOAD_SETTINGS,
         "before_run",
         record_event=record_event,
@@ -431,19 +455,24 @@ def main():
         record_event("load_text_encoder", time.time() - event_t0, source=MODEL_PATH)
 
         event_t0 = time.time()
-        text_encoder_offload = enable_offload(
-            text_encoder,
-            settings=DYNAMIC_OFFLOAD_SETTINGS,
-            component="text_encoder",
-            execution_device=DEVICE,
-            offload_device=OFFLOAD_DEVICE,
-            low_cpu_mem_usage=TEXT_ENCODER_LOW_CPU_MEM_USAGE,
-            record_event=record_event,
-            dynamic_event_name="setup_text_encoder_dynamic_offload",
-            group_event_name="setup_text_encoder_group_offload",
-        )
-        text_encoder_dynamic_offload_hook = text_encoder_offload.hook
-        run_metrics["text_encoder_offload_route"] = text_encoder_offload.route
+        if official_leaf:
+            attach_leaf(text_encoder, TEXT_ENCODER_LOW_CPU_MEM_USAGE, "setup_text_encoder_group_offload")
+            text_encoder_offload = text_encoder_dynamic_offload_hook = None
+            run_metrics["text_encoder_offload_route"] = "diffusers_group_offload"
+        else:
+            text_encoder_offload = enable_offload(
+                text_encoder,
+                settings=DYNAMIC_OFFLOAD_SETTINGS,
+                component="text_encoder",
+                execution_device=DEVICE,
+                offload_device=OFFLOAD_DEVICE,
+                low_cpu_mem_usage=TEXT_ENCODER_LOW_CPU_MEM_USAGE,
+                record_event=record_event,
+                dynamic_event_name="setup_text_encoder_dynamic_offload",
+                group_event_name="setup_text_encoder_group_offload",
+            )
+            text_encoder_dynamic_offload_hook = text_encoder_offload.hook
+            run_metrics["text_encoder_offload_route"] = text_encoder_offload.route
 
         event_t0 = time.time()
         tokenizer = GemmaTokenizerFast.from_pretrained(MODEL_PATH, subfolder="tokenizer")
@@ -476,7 +505,7 @@ def main():
         del prompt_state
         del prompt_pipe, text_encoder, tokenizer
         cleanup_runtime_state(record_event, "cleanup_after_text_encoder")
-        run_metrics["purge_windows_standby_after_text_encoder"] = purge_for_runner(args,
+        run_metrics["purge_windows_standby_after_text_encoder"] = purge(args,
             DYNAMIC_OFFLOAD_SETTINGS,
             "after_text_encoder",
             record_event=record_event,
@@ -530,7 +559,7 @@ def main():
     del connector_pipe, connectors
     cleanup_runtime_state(record_event, "cleanup_after_connectors")
 
-    dynamic_offload_enabled = DYNAMIC_OFFLOAD_SETTINGS.enabled
+    dynamic_offload_enabled = not official_leaf and DYNAMIC_OFFLOAD_SETTINGS.enabled
     dynamic_offload_config = DYNAMIC_OFFLOAD_CONFIG if dynamic_offload_enabled else None
 
     def transformer_prepare_event_name(name: str, repeat_index: int) -> str:
@@ -546,7 +575,7 @@ def main():
         }
 
         run_metrics[f"purge_windows_standby_before_transformer_{repeat_index + 1}"] = (
-            purge_for_runner(args,
+            purge(args,
                 DYNAMIC_OFFLOAD_SETTINGS,
                 "before_transformer",
                 record_event=record_event,
@@ -557,16 +586,15 @@ def main():
         event_t0 = time.time()
         if MODEL_LOW_CPU_MEM_USAGE:
             transformer_load_kwargs["device_map"] = "cpu"
-        transformer_load = from_pretrained_with_dynamic_offload(
-            MODEL_PATH,
-            model_loader=LTX2ImageTransformer2DModel,
-            dynamic_offload_config=dynamic_offload_config,
-            apply_dynamic=False,
-            **transformer_load_kwargs,
-        )
-        prepared_transformer = transformer_load.module
+        if official_leaf:
+            prepared_transformer = LTX2ImageTransformer2DModel.from_pretrained(MODEL_PATH, **transformer_load_kwargs)
+        else:
+            transformer_load = from_pretrained_with_dynamic_offload(
+                MODEL_PATH, model_loader=LTX2ImageTransformer2DModel,
+                dynamic_offload_config=dynamic_offload_config, apply_dynamic=False, **transformer_load_kwargs,
+            )
+            prepared_transformer = transformer_load.module
         load_ltx_lora(prepared_transformer, args, run_metrics, record_event)
-        prepared_dynamic_offload_hook = transformer_load.hook
         record_event(
             transformer_prepare_event_name("load_transformer", repeat_index),
             time.time() - event_t0,
@@ -590,6 +618,10 @@ def main():
                 "The transformer block manager is no longer used by this runner. "
                 "Use DDO_PRESET or transformer group offload."
             )
+        if official_leaf:
+            attach_leaf(prepared_transformer, MODEL_LOW_CPU_MEM_USAGE,
+                        transformer_prepare_event_name("setup_transformer_group_offload", repeat_index))
+            return prepared_transformer, None, None
         transformer_offload = enable_offload(
             prepared_transformer,
             settings=DYNAMIC_OFFLOAD_SETTINGS,
@@ -673,7 +705,7 @@ def main():
         denoise_progress_callback.step_times = []
         print(f"  Starting denoise loop{repeat_suffix}", flush=True)
         event_t0 = time.time()
-        with transformer_offload.profile_run() as ddo_profile_report:
+        with (nullcontext() if official_leaf else transformer_offload.profile_run()) as ddo_profile_report:
             denoise_state = denoise_pipe(
                 latents=prepare_state["latents"],
                 timesteps=prepare_state["timesteps"],
@@ -799,7 +831,7 @@ def main():
         if SAVE_METRICS:
             metrics_path.write_text(json.dumps(run_metrics, indent=2), encoding="utf-8")
         print("  Dynamic memory state reset after run.")
-    run_metrics["purge_windows_standby_after_run"] = purge_for_runner(args,
+    run_metrics["purge_windows_standby_after_run"] = purge(args,
         DYNAMIC_OFFLOAD_SETTINGS,
         "after_run",
         record_event=record_event,

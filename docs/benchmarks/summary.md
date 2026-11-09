@@ -25,6 +25,10 @@ pipeline work. Memory columns remain global run peaks, not decoder-only peaks.
 
 ### LTX video — 1280×704, 5 seconds, 121 frames, 8 steps
 
+All three rows use the default PyTorch SDPA path for video self-attention.
+The external FlashAttention 2 and Sol-Attn options were not selected. The
+specific kernel chosen internally by SDPA was not recorded.
+
 | Runtime method | Denoise (s) | Video VAE decode (s) | Tracked total (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | [Diffusers streamed leaf](ltx23-video-details.md#windows-leaf) | 392.91 | 22.52 | 452.33 | 4.72 | 41.34 |
