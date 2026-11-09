@@ -20,6 +20,9 @@ sys.path.insert(0, str(ROOT))
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
+from scripts.helpers.ltx2.text_encoder import (
+    add_text_encoder_arguments, build_text_encoder_config, load_text_encoder_for_phase, resolve_text_encoder_route,
+)
 from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import add_video_self_attention_argument, video_self_attention
 
@@ -55,8 +58,10 @@ def parse_args(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
     add_video_self_attention_argument(parser)
+    add_text_encoder_arguments(parser)
     args = parse_common_arguments(parser, argv, canonical_video=True)
     validate_lora_arguments(parser, args)
+    resolve_text_encoder_route(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
             not math.isfinite(args.frame_rate) or args.frame_rate <= 0 or not 1 <= args.steps <= 8):
@@ -191,8 +196,10 @@ def main():
                 raise RuntimeError(f"Failed to load {name}")
         return phase
 
-    def attach(module, name, group=False):
-        native_config = {"config": transformer_config} if name == "transformer" else {}
+    def attach(module, name, group=False, config=None):
+        if name == "transformer":
+            config = transformer_config
+        native_config = {"config": config} if config is not None else {}
         result = enable_offload(module, settings=settings, component=name,
                                 route="diffusers_group_offload" if group else "dynamic_offload",
                                 execution_device=device, offload_device="cpu", offload_type="leaf_level",
@@ -225,12 +232,11 @@ def main():
         start = tracker.step_start("text_encoder")
         pipe = load_phase(stages["text_encoder"])
         pipe.load_components(names="tokenizer", local_files_only=args.local_files_only)
-        encoder = Gemma3ForConditionalGeneration.from_pretrained(
-            args.distilled_model, subfolder="text_encoder", torch_dtype=dtype,
-            low_cpu_mem_usage=True, local_files_only=args.local_files_only)
+        encoder_config = build_text_encoder_config(args, transformer_config)
+        encoder = load_text_encoder_for_phase(args, dtype, encoder_config, None)
         pipe.update_components(text_encoder=encoder)
-        attach(encoder, "text_encoder", group=True)
-        del encoder
+        attach(encoder, "text_encoder", group=encoder_config is None, config=encoder_config)
+        del encoder, encoder_config
         run_stage(pipe, state, device)
         finish_phase("text_encoder", start, pipe)
         pipe = None

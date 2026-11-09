@@ -15,7 +15,8 @@ for lifecycle and reporting semantics.
 | `--max-sequence-length`, `--reuse-rotary-embeddings` | No | Yes | Yes | Yes |
 | Native capacities and execution backing reclaim | Yes | No | Yes | No |
 | Chunking, phase modulation, compact timesteps and inplace residuals | No | Yes | Yes | No |
-| Native encoder/VAE controls | No | No | Yes | No |
+| Native text encoder (`--[no-]text-encoder-native-vmm`, encoder budget) | Yes | No | Yes | No |
+| Other native encoder/VAE controls | No | No | Yes | No |
 | `--bits` | No | No | No | Yes |
 | `--metrics-level` | No | No | Yes | No |
 | `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes | No | No |
@@ -58,10 +59,16 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 | `--ddo-vmm-source-cache-gb` | 0; native retained-source cache disabled. |
 | `--ddo-vmm-source-registered-gb` | 0; native registered-source ceiling inherits the source-storage ceiling. |
 | `--ddo-vmm-execution-backing-reclaim` | False; opt into reclaim of eligible idle execution backing under pressure. Requires `vmm/auto`; the environment variable does not enable it in public VMM entries. See [behavior and tradeoffs](runner-controls.md#execution-backing-reclaim). |
-| `--text-encoder-native-vmm` | Off; opt into native text-encoder ownership on `vmm/auto`. |
-| `--text-encoder-vmm-resident-weight-budget-gb` | Required positive finite encoder capacity with the preceding switch; separate from the transformer ceiling. |
+| `--text-encoder-native-vmm` | On for `vmm/auto` (Minimal and Native VMM entries), off otherwise: the Gemma text encoder is loaded through DDO's weight-aware loader with native component ownership. `--no-text-encoder-native-vmm` restores Diffusers leaf group offload. Requesting it on another route is rejected. |
+| `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native text encoder; encoder-only capacity, separate from the transformer ceiling. Two execution slots of the largest encoder component must fit (0.625 GiB is refused at attachment). Rejected when the native text encoder is off. |
 | `--transformer-fp8-weight-only` | Off; load supported saved TorchAO FP8 weights. Requires native fast, a local `--model-path` and `--local-files-only`; does not convert BF16 weights. |
 | `--release-pytorch-host-cache-before-transformer` | Off; request PyTorch host-cache release at the phase boundary. Separate from Windows standby purge and native source-cache capacity. |
+
+The native text encoder default comes from one Windows LTX 2.3 video 8 s
+1280x704 pair with a cold standby cache in both runs: encoder phase 11.2 s
+native versus 20.8 s leaf, total 321.3 s versus 329.7 s, identical output; the
+native encoder raised that phase's absolute GPU peak from about 3.0 to 5.0 GB,
+below the run's decode peak. It is a recipe default, not general acceptance.
 
 Native API and transport selection are automatic. Source-cache settings apply
 to native fast, not the protected NVMe runtime. Benchmark capacities are explicit

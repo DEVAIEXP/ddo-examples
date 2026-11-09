@@ -18,6 +18,9 @@ from scripts.helpers.runner_controls import parse_common_arguments, purge_for_ru
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
 
+from scripts.helpers.ltx2.text_encoder import (
+    add_text_encoder_arguments, build_text_encoder_config, load_text_encoder_for_phase, resolve_text_encoder_route,
+)
 from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import (
     add_video_self_attention_argument,
@@ -62,10 +65,7 @@ def parse_args(argv=None):
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--seed", type=int, default=43)
     parser.add_argument("--max-sequence-length", type=int, default=256)
-    parser.add_argument("--text-encoder-native-vmm", action="store_true",
-                        help="Opt in to staged native encoder ownership; requires an explicit encoder ceiling.")
-    parser.add_argument("--text-encoder-vmm-resident-weight-budget-gb", type=float,
-                        help="Separate encoder-only native weight ceiling; never changes the transformer ceiling.")
+    add_text_encoder_arguments(parser)
     parser.add_argument("--feed-forward-chunk-size", type=int, default=0)
     parser.add_argument("--normalization-chunk-size", type=int, default=0)
     parser.add_argument("--phase-modulation", action="store_true",
@@ -159,16 +159,7 @@ def parse_args(argv=None):
         parser.error("Streaming video decode requires --output-type video --decode-device cuda:0.")
     if args.vae_leaf_offload and not args.stream_video_decode:
         parser.error("VAE leaf comparison requires --stream-video-decode --decode-device cuda:0.")
-    if args.text_encoder_native_vmm:
-        from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
-        if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
-            parser.error("Native text encoding requires the vmm/auto fast route.")
-        if (args.text_encoder_vmm_resident_weight_budget_gb is None or
-                not math.isfinite(args.text_encoder_vmm_resident_weight_budget_gb) or
-                args.text_encoder_vmm_resident_weight_budget_gb <= 0):
-            parser.error("Native text encoding requires an explicit positive finite --text-encoder-vmm-resident-weight-budget-gb.")
-    elif args.text_encoder_vmm_resident_weight_budget_gb is not None:
-        parser.error("The encoder-only ceiling requires --text-encoder-native-vmm.")
+    resolve_text_encoder_route(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
             not math.isfinite(args.frame_rate) or args.frame_rate <= 0):
@@ -288,35 +279,6 @@ def build_transformer_config(args, config):
     return replace(config, vmm_float8_weight_only=True,
                    vmm_component_tensor_ownership=True, vmm_module_pattern=".*",
                    vmm_execution_auxiliary_ownership=False, profile_name=None, build_profile=False)
-
-
-def build_text_encoder_config(args, transformer_config):
-    """Select explicit component ownership without mutating transformer limits."""
-    if not args.text_encoder_native_vmm:
-        return None
-    return replace(transformer_config,
-                   vmm_resident_weight_budget_gb=args.text_encoder_vmm_resident_weight_budget_gb,
-                   vmm_module_pattern=".*", vmm_page_mb=2,
-                   vmm_component_tensor_ownership=True, vmm_component_buffer_limit_mb=1,
-                   vmm_execution_auxiliary_ownership=False,
-                   vmm_float8_weight_only=False,
-                   profile_name=None, build_profile=False)
-
-
-def load_text_encoder_for_phase(args, dtype, config, record_report):
-    """Use DDO's public weight-aware loader only for the explicit native route."""
-    from transformers import Gemma3ForConditionalGeneration
-    from diffusers_dynamic_offloader import from_pretrained_with_dynamic_offload
-    loading = dict(subfolder="text_encoder", torch_dtype=dtype,
-                   low_cpu_mem_usage=True, local_files_only=args.local_files_only)
-    if config is None:
-        return Gemma3ForConditionalGeneration.from_pretrained(args.distilled_model, **loading)
-    loaded = from_pretrained_with_dynamic_offload(
-        args.distilled_model, model_loader=Gemma3ForConditionalGeneration,
-        apply_dynamic=False, dynamic_offload_config=config, **loading)
-    module = loaded.module.eval()
-    record_report(loaded.inspect_vmm_component(component="text_encoder"), "text_encoder_preflight")
-    return module
 
 
 def load_transformer_for_phase(args, model_loader, dtype, config, enabled):
