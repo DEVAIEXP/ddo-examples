@@ -56,7 +56,7 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 | `--ddo-backend`, `--ddo-preset` | `vmm`, `auto`; experimental native fast. `nvme_baseline` selects the protected NVMe route. |
 | `--ddo-vmm-resident-weight-budget-gb` | Omitted: the saved VMM residency profile selected by `--ddo-profile`, otherwise DDO's structural floor (two execution slots plus 64 MiB). An explicit value is authoritative. Active transformer weight capacity (execution slots plus arena). |
 | `--ddo-profile NAME\|auto` | Off. VMM residency profile for `vmm/auto`. `auto` names it `ltx23-video-<W>x<H>-<frames>f-<digest>` from resolution, frames and activation-relevant options (chunking, attention, phase/residual/timestep options, audio condition, sequence length). DDO adds model, machine RAM/VRAM and native library identity. |
-| `--build-ddo-profile` | Off. With `--ddo-profile`: measure the denoise and stop before decode. Run it twice with `--steps 2`: build 1 measures the structural floor, build 2 the hardware ceiling; DDO keeps the ceiling only when the measured speedup reaches 0.5 % of the step per extra GiB, otherwise the floor. Later runs with the same profile and no explicit budget use the result (the floor between the two builds). An explicit budget is refused during a build. |
+| `--build-ddo-profile` | Off. With `--ddo-profile`: measure the denoise and stop before decode. Run it twice with `--steps 3`: build 1 measures the structural floor, build 2 the hardware ceiling; DDO keeps the ceiling only when the measured speedup reaches 0.5 % of the step per extra GiB and exceeds the builds' own step-to-step spread, otherwise the floor. Later runs with the same profile and no explicit budget use the result (the floor between the two builds). An explicit budget is refused during a build. |
 | `--ddo-vmm-total-staging-gb` | Omitted: native fast uses 0.625 GiB total host staging; NVMe uses two 0.625 GiB slots. Explicit values specify total staging for either route. |
 | `--ddo-vmm-source-cache-gb` | 0; native retained-source cache disabled. |
 | `--ddo-vmm-source-registered-gb` | 0; native registered-source ceiling inherits the source-storage ceiling. |
@@ -69,8 +69,8 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 VMM residency profile example (two builds, then reuse):
 
 ```powershell
-python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto --build-ddo-profile --steps 2 <workload arguments>
-python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto --build-ddo-profile --steps 2 <workload arguments>
+python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto --build-ddo-profile --steps 3 <workload arguments>
+python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto --build-ddo-profile --steps 3 <workload arguments>
 python scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --ddo-backend vmm --ddo-profile auto <same workload arguments>
 ```
 

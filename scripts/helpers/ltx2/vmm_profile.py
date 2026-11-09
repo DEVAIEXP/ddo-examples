@@ -18,9 +18,9 @@ def add_vmm_profile_arguments(parser):
              "Without an explicit --ddo-vmm-resident-weight-budget-gb the saved budget is used.")
     parser.add_argument(
         "--build-ddo-profile", action="store_true",
-        help="Measure the denoise and stop before decode. Run it twice with --steps 2: the first build measures "
-             "the structural floor, the second the hardware ceiling; DDO keeps the ceiling only if it is worth "
-             "its memory.")
+        help="Measure the denoise and stop before decode. Run it twice with --steps 3: the first build measures "
+             "the structural floor, the second the hardware ceiling; DDO keeps the ceiling only if its gain is "
+             "worth its memory and larger than the builds' timing noise.")
 
 
 def workload_profile_name(args, num_frames):
