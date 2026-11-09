@@ -74,12 +74,15 @@ def test_native_vae_runner_keeps_explicit_capacity_and_public_lifecycle():
 
 
 def parse_runner_args(argv):
-    tree = ast.parse((ROOT / "scripts/qwen_image_21/run_dynamic_modular_vmm.py").read_text())
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "parse_args")
-    namespace = {"argparse": argparse, "math": math, "Path": Path, "ROOT": ROOT}
-    # Extract argument parsing only: do not import/execute the runner bootstrap.
-    exec(compile(ast.Module(body=[function], type_ignores=[]), "runner_args", "exec"), namespace)  # noqa: S102 -- Trusted local parser AST only.
-    return namespace["parse_args"](argv)
+    # Import with "--help" in argv: the runner skips its fresh-process bootstrap,
+    # so only argument parsing runs (parse_args now uses shared helper modules).
+    import sys
+    from unittest import mock
+
+    sys.path.insert(0, str(ROOT))
+    with mock.patch.object(sys, "argv", ["runner", "--help"]):
+        module = __import__("scripts.qwen_image_21.run_dynamic_modular_vmm", fromlist=["parse_args"])
+    return module.parse_args(argv)
 
 
 def test_vae_options_keep_defaults_and_transformer_budget(tmp_path):

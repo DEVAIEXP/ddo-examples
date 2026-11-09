@@ -24,9 +24,10 @@ from scripts.helpers.text_encoder_route import (
 )
 from scripts.helpers.vmm_profile import BUILD_STEPS as VMM_PROFILE_BUILD_STEPS
 from scripts.helpers.vmm_profile import add_vmm_profile_arguments, resolve_vmm_profile, workload_profile_name
+from scripts.helpers.attention_backend import add_attention_backend_argument, sdpa_backend_priority
 
 # Options that change the transformer activation peak (VMM profile name digest).
-QWEN_ACTIVATION_OPTIONS = ("variant",)
+QWEN_ACTIVATION_OPTIONS = ("variant", "attention_backend")
 
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
@@ -92,8 +93,21 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
+    parser.add_argument(
+        "--vae-band-rows",
+        type=int,
+        help="Opt-in band decode: decode the highest-resolution VAE blocks in horizontal bands of this "
+        "many output rows with an exact receptive-field halo; requires --vae-no-temporal-cache, not tiling.",
+    )
+    parser.add_argument(
+        "--vae-band-blocks",
+        type=int,
+        default=2,
+        help="Number of final VAE up blocks decoded in bands (default 2); requires --vae-band-rows.",
+    )
     add_text_encoder_arguments(parser)
     add_vmm_profile_arguments(parser)
+    add_attention_backend_argument(parser)
     args = parse_common_arguments(parser, argv, canonical_native=True, workload_profiles=True)
     # Native Qwen3-VL encoder by default on vmm/auto: a measured 512^2 Windows pair
     # (purge before run, benchmark transport) encoded in 3.2 s vs 13.7 s with leaf,
@@ -121,6 +135,13 @@ def parse_args(argv=None):
         parser.error("--vae-direct-padding requires --vae-no-temporal-cache")
     if args.vae_alias_residuals and not args.vae_no_temporal_cache:
         parser.error("--vae-alias-residuals requires --vae-no-temporal-cache")
+    if args.vae_band_rows is not None:
+        if not args.vae_no_temporal_cache or args.vae_tiling:
+            parser.error("--vae-band-rows requires --vae-no-temporal-cache and is not combined with --vae-tiling")
+        if args.vae_band_rows <= 0 or args.vae_band_blocks <= 0:
+            parser.error("--vae-band-rows and --vae-band-blocks must be positive")
+    elif args.vae_band_blocks != 2:
+        parser.error("--vae-band-blocks requires --vae-band-rows")
     return args
 
 
@@ -337,7 +358,8 @@ def main():
                         print(f"Step {index + 1}: {elapsed:.3f} s (host callback)", flush=True)
                     return values
 
-                with timer, result.profile_run() as profile_report:
+                with timer, result.profile_run() as profile_report, \
+                        sdpa_backend_priority(args.attention_backend, metrics):
                     # CPU readback is the completion boundary; no per-step waits.
                     latent = denoise(state=prepared, callback_on_step_end=callback, output="latents").cpu()
                 if args.ddo_profile:
@@ -416,6 +438,11 @@ def main():
                 vae.enable_residual_aliasing()
             if args.vae_direct_padding:
                 vae.enable_direct_padding()
+            if args.vae_band_rows is not None:
+                if not hasattr(vae, "enable_band_decode"):
+                    raise SystemExit("--vae-band-rows requires custom blocks whose QwenImage21ImageVAE "
+                                     "provides enable_band_decode (select them with --custom-blocks)")
+                vae.enable_band_decode(rows=args.vae_band_rows, banded_blocks=args.vae_band_blocks)
             # Configure local modules before attaching either offload route.
             if args.vae_vmm_offload:
                 run.report(vae_loaded.inspect_vmm_component(component="vae"), "vae_preflight")
@@ -444,6 +471,9 @@ def main():
                 "vae_class": type(vae).__name__,
                 "vae_alias_residuals": args.vae_alias_residuals and not vae.use_tiling,
                 "vae_direct_padding": args.vae_direct_padding and not vae.use_tiling,
+                "vae_band_rows": args.vae_band_rows,
+                "vae_band_blocks": args.vae_band_blocks if args.vae_band_rows is not None else None,
+                "vae_band_halo_rows": getattr(vae, "band_decode_halo", None) if args.vae_band_rows else None,
             }
             decode = QwenImage21DecodeStep().init_pipeline()
             decode.update_components(vae=vae)

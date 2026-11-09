@@ -57,6 +57,10 @@ def parser_body(path):
                      add_lora_arguments=add_lora_arguments, validate_lora_arguments=validate_lora_arguments,
                      parse_optional_float=lambda value: None if value in (None, "") else float(value))
     for node in tree.body:
+        # Parser helpers shared by the runners (CPU-only modules) are imported as
+        # the runner imports them; other top-level imports and code do not run.
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("scripts.helpers"):
+            exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)  # noqa: S102
         if isinstance(node, ast.Assign):
             try:
                 value = ast.literal_eval(node.value)
@@ -281,7 +285,9 @@ def test_linear_profile_invalid_requests_fail_before_model_loading(path, argumen
         parser_body(path)()
 
 
-@pytest.mark.parametrize("path", PUBLIC_IMAGE_VMM + [PUBLIC_LTX_LINEAR[1], *PUBLIC_VIDEO[::2], PUBLIC_VIDEO[-1]])
+# The native VMM entries (image and video) expose --ddo-profile for the VMM
+# residency profile (tests/test_image_vmm_profile_cpu.py, test_vmm_profile_cpu.py).
+@pytest.mark.parametrize("path", [PUBLIC_LTX_LINEAR[1], *PUBLIC_VIDEO[::2]])
 def test_profile_restoration_does_not_expose_other_routes(path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [str(path), "--ddo-profile", "name"])
     with pytest.raises(SystemExit):
@@ -345,7 +351,7 @@ def test_public_native_vocabulary_and_total_capacity(path, monkeypatch, capsys):
     exposed = set(re.findall(r"--ddo-[a-z-]+", help_text))
     assert exposed == {"--ddo-backend", "--ddo-preset", "--ddo-vmm-resident-weight-budget-gb",
                        "--ddo-vmm-total-staging-gb", "--ddo-vmm-source-cache-gb", "--ddo-vmm-source-registered-gb",
-                       "--ddo-vmm-execution-backing-reclaim"}
+                       "--ddo-vmm-execution-backing-reclaim", "--ddo-profile"}
 
 
 @pytest.mark.parametrize("path", PUBLIC_IMAGE_VMM)
@@ -452,12 +458,18 @@ def documented_image_commands():
     commands = []
     for page in (ROOT / "docs").rglob("*.md"):
         for block in re.findall(r"```(?:powershell|bash|sh)\n(.*?)```", page.read_text(encoding="utf-8"), re.S):
+            # PowerShell argument arrays ($name = @("--a", "b", ...)) splatted as @name.
+            arrays = {name: shlex.split(body.replace(",", " "))
+                      for name, body in re.findall(r"\$(\w+)\s*=\s*@\((.*?)\)", block, re.S)}
             block = re.sub(r"[`\\]\r?\n", " ", block)
             for line in block.splitlines():
                 if not re.search(r"python\s+-B\s+scripts/(?:ltx2_image|ltx2_video|qwen_image_21)/", line):
                     continue
                 tokens = shlex.split(line)
-                commands.append((page.relative_to(ROOT).as_posix(), tokens[2], tokens[3:]))
+                arguments = [part for token in tokens[3:]
+                             for part in (arrays[token[1:]] if token.startswith("@") and token[1:] in arrays
+                                          else [token])]
+                commands.append((page.relative_to(ROOT).as_posix(), tokens[2], arguments))
     return commands
 
 

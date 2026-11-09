@@ -92,6 +92,7 @@ still requires separate validation.
 | `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes or with an explicit group-on/dynamic-off encoder override); `--no-text-encoder-native-vmm` selects leaf group offload. Native encoder ownership is independent of the transformer and cannot be combined with explicit group-on or dynamic-off compatibility overrides. A measured 1280x704 Windows pair (standby purge before run) encoded in 10.65 s versus 17.27 s with leaf, peak RSS 3.55 GB versus 25.9 GB, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--vae-leaf-offload` | Default off; explicitly select no-stream leaf VAE offload instead of the resident decoder. |
+| `--attention-backend default\|cudnn` | VMM entry. Default `default` (PyTorch's SDPA order). `cudnn` prefers flash > cuDNN > memory-efficient > math during the denoise only; ineligible inputs fall back. Kernels change, model math does not, but outputs can differ numerically: compare images before adopting it. Part of the `auto` profile name. Not yet measured for LTX image. |
 
 Boolean loading/group/dynamic controls also accept `--no-...`. The VAE leaf
 override accepts `--no-vae-leaf-offload`. This entry does not expose native idle

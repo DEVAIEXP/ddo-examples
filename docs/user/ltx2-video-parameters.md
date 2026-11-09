@@ -135,6 +135,10 @@ prove GPU completion or local VRAM placement. CPU parser checks do not establish
 GPU or performance acceptance.
 ## Video self-attention backend
 
+`--trace-attention-operators` (off by default) profiles the PyTorch attention
+operators observed during denoising and records them in the metrics; it is a
+diagnostic and adds profiler finalization time.
+
 All LTX video runners accept `--video-self-attention` with `default`,
 `flash-attn2`, `sol-attn`, or `cudnn`. The default preserves the model's
 configured attention. `flash-attn2` uses the optional external FlashAttention 2

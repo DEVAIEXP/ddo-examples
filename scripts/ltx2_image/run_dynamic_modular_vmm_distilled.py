@@ -49,9 +49,10 @@ from scripts.helpers.ltx2.text_encoder import add_text_encoder_arguments, resolv
 from scripts.helpers.inference_utils import RunTracker, flush
 from scripts.helpers.vmm_profile import BUILD_STEPS as VMM_PROFILE_BUILD_STEPS
 from scripts.helpers.vmm_profile import add_vmm_profile_arguments, resolve_vmm_profile, workload_profile_name
+from scripts.helpers.attention_backend import add_attention_backend_argument, sdpa_backend_priority
 
 # Options that change the transformer activation peak (VMM profile name digest).
-IMAGE_ACTIVATION_OPTIONS = ("pag", "guidance_scale", "max_sequence_length", "fake_prompt")
+IMAGE_ACTIVATION_OPTIONS = ("pag", "guidance_scale", "max_sequence_length", "fake_prompt", "attention_backend")
 
 import ddo_vmm_allocator
 
@@ -237,6 +238,7 @@ def parse_args():
     parser.add_argument("--pag-layers", default=",".join(str(layer) for layer in PAG_APPLIED_LAYERS))
     add_text_encoder_arguments(parser)
     add_vmm_profile_arguments(parser)
+    add_attention_backend_argument(parser)
     parser.add_argument("--vae-leaf-offload", action="store_true")
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_vmm")
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=METRICS_LEVEL)
@@ -1120,7 +1122,8 @@ def main():
                 enabled=True, native_units=args.ddo_native_timeline,
                 diagnostic_step_wait=args.ddo_diagnostic_step_wait,
             ) if args.ddo_gpu_timing else nullcontext()
-            with transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer:
+            with transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer, \
+                    sdpa_backend_priority(args.attention_backend, run_metrics):
                 denoise_progress_callback.execution_timer = ddo_timer
                 denoise_state = denoise_pipe(
                     latents=prepare_state["latents"],
