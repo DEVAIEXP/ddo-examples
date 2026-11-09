@@ -89,7 +89,7 @@ still requires separate validation.
 | `--text-encoder-low-cpu-mem-usage` | Default on; lower-CPU-memory text encoder loading. |
 | `--text-encoder-group-offload` | Explicit encoder group/leaf compatibility override. Omitted inherits environment/preset resolution; ordinary default enabled. |
 | `--text-encoder-dynamic-offload` | Explicit encoder DDO override. Omitted inherits environment/preset resolution; ordinary default disabled. |
-| `--text-encoder-native-vmm` | Default off (`--no-text-encoder-native-vmm` also accepted). Select native encoder ownership independently of the transformer; requires the native `vmm/auto` route and cannot be combined with explicit group-on or dynamic-off compatibility overrides. The image default stays off until the native encoder is measured for image (the video entries default to it). |
+| `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes or with an explicit group-on/dynamic-off encoder override); `--no-text-encoder-native-vmm` selects leaf group offload. Native encoder ownership is independent of the transformer and cannot be combined with explicit group-on or dynamic-off compatibility overrides. A measured 1280x704 Windows pair (standby purge before run) encoded in 10.65 s versus 17.27 s with leaf, peak RSS 3.55 GB versus 25.9 GB, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--vae-leaf-offload` | Default off; explicitly select no-stream leaf VAE offload instead of the resident decoder. |
 

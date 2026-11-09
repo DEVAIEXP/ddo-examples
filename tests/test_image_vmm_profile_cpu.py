@@ -38,11 +38,17 @@ def test_profile_options_and_omitted_budget(monkeypatch, parse, prefix):
         parse(monkeypatch, ["--ddo-preset", "nvme_baseline", "--ddo-profile", "auto"])
 
 
-@pytest.mark.parametrize("parse", [ltx_image, qwen])
-def test_native_text_encoder_is_opt_in_with_its_own_ceiling(monkeypatch, parse):
-    assert parse(monkeypatch, []).text_encoder_native_vmm is False  # Leaf until measured.
+@pytest.mark.parametrize("parse, default", [(ltx_image, True), (qwen, False)])
+def test_native_text_encoder_default_and_its_own_ceiling(monkeypatch, parse, default):
+    assert parse(monkeypatch, []).text_encoder_native_vmm is default  # Qwen: leaf until measured.
     native = parse(monkeypatch, ["--text-encoder-native-vmm"])
     assert native.text_encoder_native_vmm is True and native.text_encoder_vmm_resident_weight_budget_gb == 4.0
+    assert parse(monkeypatch, ["--no-text-encoder-native-vmm"]).text_encoder_native_vmm is False
+
+
+def test_ltx_image_keeps_leaf_with_explicit_compatibility_or_other_routes(monkeypatch):
+    assert ltx_image(monkeypatch, ["--text-encoder-group-offload"]).text_encoder_native_vmm is False
+    assert ltx_image(monkeypatch, ["--ddo-preset", "nvme_baseline"]).text_encoder_native_vmm is False
 
 
 def test_ltx_image_builds_three_steps_and_keeps_the_nvme_budget(monkeypatch):

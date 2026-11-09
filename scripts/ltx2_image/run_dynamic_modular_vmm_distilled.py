@@ -274,8 +274,12 @@ def parse_args():
     add_lora_arguments(parser)
     args = parse_common_arguments(parser, canonical_native=True, image_staging_slots=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
-    # The native Gemma encoder is opt-in here until it is measured for image.
-    resolve_text_encoder_route(parser, args, native_default=False)
+    # Native Gemma encoder by default on vmm/auto: a measured 1280x704 pair (purge
+    # before run) encoded in 10.65 s vs 17.27 s with leaf, peak RSS 3.55 vs 25.9 GB,
+    # identical image. Explicit encoder compatibility controls keep leaf.
+    explicit_compat = args.text_encoder_group_offload is True or args.text_encoder_dynamic_offload is False
+    native_default = not (explicit_compat or getattr(args, "fake_prompt", False))
+    resolve_text_encoder_route(parser, args, native_default=native_default)
     resolve_vmm_profile(parser, args, workload_profile_name(
         "ltx23-image", f"{args.width}x{args.height}", args, IMAGE_ACTIVATION_OPTIONS))
     if args.vmm_resident_weight_budget_gb is None and not (args.ddo_backend == "vmm" and args.ddo_preset == "auto"):
