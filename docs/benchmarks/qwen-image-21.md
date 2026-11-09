@@ -2,6 +2,9 @@
 
 [Test hardware and platform limits](hardware.md).
 
+[Model-specific feature measurements](qwen-image-21-features.md) compare the
+1024-square resident VAE decode options separately from runtime comparisons.
+
 **Leaf control:** Windows and native Linux use Diffusers leaf offloading with
 `use_stream=True`. WSL uses `use_stream=False` because streamed leaf offloading
 was incompatible with the tested WSL environment; this is not a limitation

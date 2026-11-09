@@ -41,6 +41,7 @@ nav:
       - LTX image: docs/benchmarks/ltx23-image.md
       - LTX video: docs/benchmarks/ltx23-video.md
       - Qwen Image 2.1: docs/benchmarks/qwen-image-21.md
+      - Qwen image features: docs/benchmarks/qwen-image-21-features.md
       - Recording rules: docs/benchmarks/recording.md
       - Reproduction: docs/benchmarks/reproduction.md
   - Developer guides:
