@@ -95,8 +95,10 @@ def parse_args(argv=None):
     add_text_encoder_arguments(parser)
     add_vmm_profile_arguments(parser)
     args = parse_common_arguments(parser, argv, canonical_native=True, workload_profiles=True)
-    # The native Qwen3-VL encoder is opt-in until it is measured for this model.
-    resolve_text_encoder_route(parser, args, native_default=False)
+    # Native Qwen3-VL encoder by default on vmm/auto: a measured 512^2 Windows pair
+    # (purge before run, benchmark transport) encoded in 3.2 s vs 13.7 s with leaf,
+    # identical image. --no-text-encoder-native-vmm keeps leaf.
+    resolve_text_encoder_route(parser, args, native_default=True)
     resolve_vmm_profile(parser, args, workload_profile_name(
         "qwen-image21", f"{args.width}x{args.height}", args, QWEN_ACTIVATION_OPTIONS))
     if sum((args.vae_vmm_offload, args.vae_leaf_offload, args.vae_resident)) > 1:

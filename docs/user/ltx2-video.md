@@ -64,7 +64,8 @@ python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --step
 activation options, so changing them selects another profile. Without the two
 builds the generation still runs, at DDO's structural floor. On the reference
 Windows 8 GB machine the builds chose that floor (0.629 GiB; the measured
-speedup of a 4.77 GiB ceiling was 0.11 % per GiB, below the 0.5 % threshold).
+speedup of a 4.77 GiB ceiling was 0.11 % per GiB, below the threshold; the
+default is now 2 % per GiB).
 An explicit `--ddo-vmm-resident-weight-budget-gb` still overrides the profile.
 
 This usage recipe explicitly enables [execution backing reclaim](runner-controls.md#execution-backing-reclaim).

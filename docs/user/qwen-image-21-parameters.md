@@ -25,7 +25,7 @@ leaf entries.
 
 | Control | Purpose |
 | --- | --- |
-| `--text-encoder-native-vmm` | Default off (`--no-text-encoder-native-vmm` also accepted). Load the Qwen3-VL encoder through DDO's weight-aware loader with native component ownership on `vmm/auto`, instead of Diffusers leaf offload. Not yet measured for this model. |
+| `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes); `--no-text-encoder-native-vmm` selects Diffusers leaf offload. Loads the Qwen3-VL encoder through DDO's weight-aware loader with native component ownership. A measured 512² Windows pair (standby purge before run, benchmark transport) encoded in 3.2 s versus 13.7 s with leaf, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 
 | Control | Purpose |
