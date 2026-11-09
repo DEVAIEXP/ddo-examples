@@ -35,20 +35,37 @@ For that Windows native workload, the public command uses the documented
 capacities and computation options below. Run in an elevated terminal for the
 explicit Windows purge phases. This command generates video; it is not a dry run.
 
+The transformer residency budget comes from a VMM residency profile instead of
+a fixed value. Build it once per workload and machine by running the same
+command twice with `--build-ddo-profile --steps 3` (about 2 minutes each; each
+build stops before decode), then generate normally:
+
 ```powershell
-python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
-  --ddo-backend vmm --ddo-preset auto `
-  --width 1280 --height 704 --seconds 5 --frame-rate 24 --steps 8 --seed 43 `
-  --ddo-vmm-resident-weight-budget-gb 1.5 `
-  --ddo-vmm-total-staging-gb 1.5 `
-  --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 `
-  --ddo-vmm-execution-backing-reclaim `
-  --feed-forward-chunk-size 1024 --normalization-chunk-size 1024 `
-  --phase-modulation --compact-timesteps --inplace-residuals `
-  --decode-device cuda:0 --stream-video-decode `
-  --purge-before-run --purge-after-text-encoder --purge-before-transformer --no-purge-after-run `
-  --memory-monitor rss --metrics-level 2 --show-profile --show-metrics --save-metrics
+$recipe = @(
+  "--ddo-backend", "vmm", "--ddo-preset", "auto",
+  "--width", "1280", "--height", "704", "--seconds", "5", "--frame-rate", "24", "--seed", "43",
+  "--ddo-vmm-total-staging-gb", "1.5",
+  "--ddo-vmm-source-cache-gb", "24.625", "--ddo-vmm-source-registered-gb", "24.625",
+  "--ddo-vmm-execution-backing-reclaim",
+  "--feed-forward-chunk-size", "1024", "--normalization-chunk-size", "1024",
+  "--phase-modulation", "--compact-timesteps", "--inplace-residuals",
+  "--decode-device", "cuda:0", "--stream-video-decode",
+  "--purge-before-run", "--purge-after-text-encoder", "--purge-before-transformer", "--no-purge-after-run",
+  "--memory-monitor", "rss", "--metrics-level", "2", "--show-profile", "--show-metrics", "--save-metrics",
+  "--ddo-profile", "auto")
+# Build 1/2 (structural floor) and 2/2 (hardware ceiling), once per workload and machine.
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --build-ddo-profile --steps 3
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --build-ddo-profile --steps 3
+# Generation with the saved budget.
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --steps 8
 ```
+
+`--ddo-profile auto` names the profile from the resolution, frames and the
+activation options, so changing them selects another profile. Without the two
+builds the generation still runs, at DDO's structural floor. On the reference
+Windows 8 GB machine the builds chose that floor (0.629 GiB; the measured
+speedup of a 4.77 GiB ceiling was 0.11 % per GiB, below the 0.5 % threshold).
+An explicit `--ddo-vmm-resident-weight-budget-gb` still overrides the profile.
 
 This usage recipe explicitly enables [execution backing reclaim](runner-controls.md#execution-backing-reclaim).
 That opt-in does not change the recorded conditions or results of historical benchmark rows.
