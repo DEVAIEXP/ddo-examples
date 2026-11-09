@@ -1,0 +1,51 @@
+"""VMM residency profile and text-encoder options of the image VMM runners (CPU, no models)."""
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+def load(module_name, monkeypatch):
+    # "--help" in argv skips the fresh-process bootstrap executed at import.
+    monkeypatch.setattr(sys, "argv", ["runner", "--help"])
+    return __import__(module_name, fromlist=["parse_args"])
+
+
+def ltx_image(monkeypatch, argv):
+    pytest.importorskip("ddo_vmm_allocator")  # This runner imports the allocator adapter directly.
+    module = load("scripts.ltx2_image.run_dynamic_modular_vmm_distilled", monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["runner", *argv])
+    return module.parse_args()
+
+
+def qwen(monkeypatch, argv):
+    return load("scripts.qwen_image_21.run_dynamic_modular_vmm", monkeypatch).parse_args(argv)
+
+
+@pytest.mark.parametrize("parse, prefix", [(ltx_image, "ltx23-image-1280x704-"), (qwen, "qwen-image21-1024x1024-")])
+def test_profile_options_and_omitted_budget(monkeypatch, parse, prefix):
+    default = parse(monkeypatch, [])
+    assert default.ddo_profile is None and default.build_ddo_profile is False
+    assert getattr(default, "vmm_resident_weight_budget_gb", getattr(default, "ddo_vmm_resident_weight_budget_gb", 0)) is None
+    built = parse(monkeypatch, ["--ddo-profile", "auto", "--build-ddo-profile"])
+    assert built.ddo_profile.startswith(prefix) and built.build_ddo_profile is True
+    with pytest.raises(SystemExit):
+        parse(monkeypatch, ["--build-ddo-profile"])
+    with pytest.raises(SystemExit):
+        parse(monkeypatch, ["--ddo-preset", "nvme_baseline", "--ddo-profile", "auto"])
+
+
+@pytest.mark.parametrize("parse", [ltx_image, qwen])
+def test_native_text_encoder_is_opt_in_with_its_own_ceiling(monkeypatch, parse):
+    assert parse(monkeypatch, []).text_encoder_native_vmm is False  # Leaf until measured.
+    native = parse(monkeypatch, ["--text-encoder-native-vmm"])
+    assert native.text_encoder_native_vmm is True and native.text_encoder_vmm_resident_weight_budget_gb == 4.0
+
+
+def test_ltx_image_builds_three_steps_and_keeps_the_nvme_budget(monkeypatch):
+    assert ltx_image(monkeypatch, ["--ddo-profile", "auto", "--build-ddo-profile"]).ddo_profile_steps == 3
+    assert ltx_image(monkeypatch, ["--ddo-preset", "nvme_baseline"]).vmm_resident_weight_budget_gb == 2.0
+    assert ltx_image(monkeypatch, ["--ddo-vmm-resident-weight-budget-gb", "4"]).vmm_resident_weight_budget_gb == 4.0

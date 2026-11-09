@@ -3,7 +3,9 @@
 This is intentionally separate from ``run_dynamic_modular_distilled.py``. It
 keeps the text encoder on Diffusers group offload by default and routes the dense
 transformer through DDO's experimental CUDA virtual-memory runtime. Explicit
---text-encoder-native-vmm also enables the separately validated encoder path.
+--text-encoder-native-vmm also enables the separately validated encoder path
+(4 GiB encoder-only ceiling). --ddo-profile NAME|auto selects a VMM residency
+profile; --build-ddo-profile (twice, three steps each) builds it.
 """
 
 import argparse
@@ -43,7 +45,13 @@ from diffusers_dynamic_offloader import (
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
+from scripts.helpers.ltx2.text_encoder import add_text_encoder_arguments, resolve_text_encoder_route
 from scripts.helpers.inference_utils import RunTracker, flush
+from scripts.helpers.vmm_profile import BUILD_STEPS as VMM_PROFILE_BUILD_STEPS
+from scripts.helpers.vmm_profile import add_vmm_profile_arguments, resolve_vmm_profile, workload_profile_name
+
+# Options that change the transformer activation peak (VMM profile name digest).
+IMAGE_ACTIVATION_OPTIONS = ("pag", "guidance_scale", "max_sequence_length", "fake_prompt")
 
 import ddo_vmm_allocator
 
@@ -204,7 +212,9 @@ def parse_args():
     parser.add_argument("--ddo-backend", choices=("linear", "vmm"), default="vmm")
     parser.add_argument("--ddo-preset", default="auto", help="VMM: auto or nvme_baseline.")
     parser.add_argument("--ddo-vmm-resident-weight-budget-gb", dest="vmm_resident_weight_budget_gb",
-                        type=float, default=VMM_RESIDENT_WEIGHT_BUDGET_GB)
+                        type=float, default=None,
+                        help="Transformer residency budget in GiB. Omitted on vmm/auto: the saved --ddo-profile "
+                             f"or DDO's structural floor; other routes use {VMM_RESIDENT_WEIGHT_BUDGET_GB:g}.")
     parser.add_argument("--ddo-vmm-total-staging-gb", type=float, default=None,
                         help="Total host-staging capacity in GiB; see the documented defaults.")
     parser.add_argument("--ddo-vmm-source-cache-gb", type=float, default=0.0,
@@ -225,8 +235,8 @@ def parse_args():
     parser.add_argument("--pag", action=argparse.BooleanOptionalAction, default=PAG_ENABLED)
     parser.add_argument("--pag-scale", type=float, default=PAG_SCALE)
     parser.add_argument("--pag-layers", default=",".join(str(layer) for layer in PAG_APPLIED_LAYERS))
-    parser.add_argument("--text-encoder-native-vmm", action="store_true",
-                        help="Opt in to the native encoder phase before loading the transformer.")
+    add_text_encoder_arguments(parser)
+    add_vmm_profile_arguments(parser)
     parser.add_argument("--vae-leaf-offload", action="store_true")
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_vmm")
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=METRICS_LEVEL)
@@ -256,14 +266,21 @@ def parse_args():
         ddo_vmm_page_mb=32, ddo_vmm_diagnostic_pin_source=False, ddo_vmm_diagnostic_pin_source_gb=0.0,
         fake_prompt=FAKE_PROMPT_EMBEDS, generation_repeats=GENERATION_REPEATS,
         transformer_prepare_repeats=TRANSFORMER_PREPARE_REPEATS,
-        ddo_profile=None, build_ddo_profile=False, ddo_profile_steps=2, pre_vae_cleanup_repeats=None,
+        ddo_profile_steps=VMM_PROFILE_BUILD_STEPS, pre_vae_cleanup_repeats=None,
         ddo_gpu_timing=False, ddo_native_timeline=False, ddo_diagnostic_step_wait=False,
         resident_module_budget_gb=None, max_resident_module_budget_gb=None, pin_weight_budget_gb=None,
         reset_dynamic_memory_after_run=RESET_DYNAMIC_MEMORY_AFTER_RUN, print_presets=False,
     )
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, canonical_native=True, image_staging_slots=True)
+    args = parse_common_arguments(parser, canonical_native=True, image_staging_slots=True, workload_profiles=True)
     validate_lora_arguments(parser, args)
+    # The native Gemma encoder is opt-in here until it is measured for image.
+    resolve_text_encoder_route(parser, args, native_default=False)
+    resolve_vmm_profile(parser, args, workload_profile_name(
+        "ltx23-image", f"{args.width}x{args.height}", args, IMAGE_ACTIVATION_OPTIONS))
+    if args.vmm_resident_weight_budget_gb is None and not (args.ddo_backend == "vmm" and args.ddo_preset == "auto"):
+        # Routes without a VMM residency profile keep the established budget.
+        args.vmm_resident_weight_budget_gb = VMM_RESIDENT_WEIGHT_BUDGET_GB
     return args
 
 
@@ -452,8 +469,10 @@ def main():
         settings_environ["DDO_MAX_RESIDENT_MODULE_BUDGET_GB"] = str(args.max_resident_module_budget_gb)
     if args.pin_weight_budget_gb is not None:
         settings_environ["DDO_PIN_WEIGHT_BUDGET_GB"] = str(args.pin_weight_budget_gb)
-    if args.vmm_resident_weight_budget_gb <= 0:
-        raise SystemExit("--vmm-resident-weight-budget-gb must be positive")
+    if args.vmm_resident_weight_budget_gb is not None and args.vmm_resident_weight_budget_gb <= 0:
+        raise SystemExit("--ddo-vmm-resident-weight-budget-gb must be positive")
+    if args.vmm_resident_weight_budget_gb is None and args.ddo_vmm_diagnostic_adapter:
+        args.vmm_resident_weight_budget_gb = VMM_RESIDENT_WEIGHT_BUDGET_GB
     if args.vmm_staging_buffer_gb <= 0:
         raise SystemExit("--vmm-staging-buffer-gb must be positive")
     if args.vmm_windows_file_read_chunk_mb <= 0:
@@ -481,7 +500,9 @@ def main():
         if value < 0:
             raise SystemExit(f"{flag} must be non-negative")
     settings_environ["DDO_EXECUTION_MODE"] = ddo_backend.execution_mode
-    settings_environ["DDO_VMM_RESIDENT_WEIGHT_BUDGET_GB"] = str(args.vmm_resident_weight_budget_gb)
+    # 0 on vmm/auto without an explicit budget: DDO applies the saved VMM
+    # residency profile or its structural floor.
+    settings_environ["DDO_VMM_RESIDENT_WEIGHT_BUDGET_GB"] = str(args.vmm_resident_weight_budget_gb or 0.0)
     settings_environ["DDO_VMM_STAGING_BUFFER_GB"] = str(args.vmm_staging_buffer_gb)
     settings_environ["DDO_VMM_WINDOWS_FILE_READ_CHUNK_MB"] = str(args.vmm_windows_file_read_chunk_mb)
     settings_environ["DDO_VMM_VIRTUAL_HOST_TRANSPORT"] = "1" if args.vmm_virtual_host_transport else "0"
@@ -707,7 +728,9 @@ def main():
         if TEXT_ENCODER_NATIVE_VMM:
             encoder_route_kwargs = dict(
                 route="dynamic_offload",
+                # Encoder-only ceiling: never the transformer's (profile/floor) budget.
                 config=replace(DYNAMIC_OFFLOAD_CONFIG, vmm_module_pattern=".*", vmm_page_mb=2,
+                               vmm_resident_weight_budget_gb=args.text_encoder_vmm_resident_weight_budget_gb,
                                vmm_component_tensor_ownership=True, vmm_component_buffer_limit_mb=1,
                                profile_name=None, build_profile=False),
             )

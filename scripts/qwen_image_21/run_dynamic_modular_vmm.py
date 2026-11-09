@@ -19,6 +19,14 @@ sys.path.insert(0, str(ROOT))
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, apply_execution_backing_reclaim
+from scripts.helpers.text_encoder_route import (
+    add_text_encoder_arguments, native_text_encoder_config, resolve_text_encoder_route,
+)
+from scripts.helpers.vmm_profile import BUILD_STEPS as VMM_PROFILE_BUILD_STEPS
+from scripts.helpers.vmm_profile import add_vmm_profile_arguments, resolve_vmm_profile, workload_profile_name
+
+# Options that change the transformer activation peak (VMM profile name digest).
+QWEN_ACTIVATION_OPTIONS = ("variant",)
 
 def parse_args(argv=None):
     from diffusers_dynamic_offloader import add_dynamic_offload_arguments
@@ -84,7 +92,13 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parse_common_arguments(parser, argv, canonical_native=True)
+    add_text_encoder_arguments(parser)
+    add_vmm_profile_arguments(parser)
+    args = parse_common_arguments(parser, argv, canonical_native=True, workload_profiles=True)
+    # The native Qwen3-VL encoder is opt-in until it is measured for this model.
+    resolve_text_encoder_route(parser, args, native_default=False)
+    resolve_vmm_profile(parser, args, workload_profile_name(
+        "qwen-image21", f"{args.width}x{args.height}", args, QWEN_ACTIVATION_OPTIONS))
     if sum((args.vae_vmm_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE native, leaf and resident overrides are mutually exclusive")
     if args.vae_vmm_offload:
@@ -185,26 +199,50 @@ def main():
             metrics["resolved_model_root"] = str(model_root)
             metrics["sample_sigmas"] = sample_sigmas
 
+        metrics["text_encoder_route_requested"] = "native" if args.text_encoder_native_vmm else "diffusers_leaf"
+        encoder_config = (native_text_encoder_config(config, args.text_encoder_vmm_resident_weight_budget_gb)
+                          if args.text_encoder_native_vmm else None)
         with run.phase("load_text_encoder"):
-            text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
-                model,
-                subfolder="text_encoder",
-                torch_dtype=dtype,
-                **loading,
-            ).eval()
+            if encoder_config is not None:
+                # DDO's weight-aware loader associates checkpoint slices for native ownership.
+                encoder_load = from_pretrained_with_dynamic_offload(
+                    model, model_loader=Qwen3VLForConditionalGeneration, subfolder="text_encoder",
+                    torch_dtype=dtype, low_cpu_mem_usage=True, dynamic_offload_config=encoder_config,
+                    apply_dynamic=False, **loading)
+                text_encoder = encoder_load.module.eval()
+                run.report(encoder_load.inspect_vmm_component(component="text_encoder"), "text_encoder_preflight")
+                del encoder_load
+            else:
+                text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+                    model,
+                    subfolder="text_encoder",
+                    torch_dtype=dtype,
+                    **loading,
+                ).eval()
             processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
         with run.phase("attach_text_encoder"):
-            text_result = enable_offload(
-                text_encoder,
-                component="text_encoder",
-                preset="diffusers_leaf_offload_compat",
-                group_offload=True,
-                dynamic_offload=False,
-                offload_type="leaf_level",
-                execution_device=device,
-                use_environment=False,
-                record_event=run.tracker.record_event,
-            )
+            if encoder_config is not None:
+                text_result = enable_offload(
+                    text_encoder,
+                    component="text_encoder",
+                    config=encoder_config,
+                    route="dynamic_offload",
+                    execution_device=device,
+                    use_environment=False,
+                    record_event=run.tracker.record_event,
+                )
+            else:
+                text_result = enable_offload(
+                    text_encoder,
+                    component="text_encoder",
+                    preset="diffusers_leaf_offload_compat",
+                    group_offload=True,
+                    dynamic_offload=False,
+                    offload_type="leaf_level",
+                    execution_device=device,
+                    use_environment=False,
+                    record_event=run.tracker.record_event,
+                )
             prompt_pipe = QwenImage21TextEncoderStep().init_pipeline()
             prompt_pipe.update_components(text_encoder=text_result.module, processor=processor)
         with text_result.cleanup_on_error(), run.phase("encode"):
@@ -248,6 +286,8 @@ def main():
                 execution_device=device,
                 use_environment=False,
                 record_event=run.tracker.record_event,
+                **({"profile_name": args.ddo_profile, "build_profile": args.build_ddo_profile}
+                   if args.ddo_profile else {}),
             )
         with result.cleanup_on_error():
             with run.phase("prepare"):
@@ -260,7 +300,9 @@ def main():
                     execution_device=device,
                     height=args.height,
                     width=args.width,
-                    num_inference_steps=args.steps,
+                    # A profile build measures a short denoise (Turbo keeps its saved sigmas).
+                    num_inference_steps=(min(args.steps, VMM_PROFILE_BUILD_STEPS)
+                                         if args.build_ddo_profile else args.steps),
                     generator=torch.Generator().manual_seed(args.seed),
                 )
                 # Drop CPU conditioning and the preparation pipeline before denoise.
@@ -293,9 +335,11 @@ def main():
                         print(f"Step {index + 1}: {elapsed:.3f} s (host callback)", flush=True)
                     return values
 
-                with timer:
+                with timer, result.profile_run() as profile_report:
                     # CPU readback is the completion boundary; no per-step waits.
                     latent = denoise(state=prepared, callback_on_step_end=callback, output="latents").cpu()
+                if args.ddo_profile:
+                    metrics["ddo_profile"] = profile_report
                 metrics["denoise_through_cpu_readback_sec"] = time.perf_counter() - started
                 # Resolve the final event only once, when explicitly requested.
                 metrics["execution_timing"] = timer.snapshot(wait=args.ddo_gpu_timing)
@@ -313,6 +357,12 @@ def main():
             # Remove all state/component references, not just the module variable.
             del result, transformer, prepared, denoise, scheduler, timer, callback
             flush()
+
+        if args.build_ddo_profile:
+            # The VMM residency profile is saved; decode would not change it.
+            metrics.update(status="completed", operation="vmm_residency_profile_build")
+            print(f"VMM residency profile build complete: {metrics.get('ddo_profile')}", flush=True)
+            return
 
         if args.release_native_cache_before_vae:
             with run.phase("release_native_cache_before_vae"):

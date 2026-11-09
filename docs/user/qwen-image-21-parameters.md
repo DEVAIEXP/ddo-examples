@@ -11,8 +11,22 @@ Options in other Qwen entries are identified separately below.
 The BF16 linear `run_dynamic_modular.py` also supports `--ddo-profile NAME`
 and `--build-ddo-profile`, independently of display-only `--show-profile`.
 See the [linear calibration recipe](qwen-image-21.md#linear-capacity-profile).
-These capacity controls are not exposed by the public minimal, VMM, SDNQ or
-Diffusers leaf entries.
+
+This VMM entry accepts the same two options for the VMM residency profile
+(`NAME` or `auto`): run the build twice with `--steps 3` (Turbo keeps its
+saved sigmas; floor, then hardware ceiling; each build stops before decode),
+then generate with the same arguments. `auto` names the profile
+`qwen-image21-<W>x<H>-<digest>` from the resolution and variant. Without an
+explicit `--ddo-vmm-resident-weight-budget-gb`, `vmm/auto` uses the saved
+profile or DDO's structural floor (previously the generic 4 GiB default). See
+[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/native-vmm.md#vmm-residency-profile).
+The capacity controls are not exposed by the public minimal, SDNQ or Diffusers
+leaf entries.
+
+| Control | Purpose |
+| --- | --- |
+| `--text-encoder-native-vmm` | Default off (`--no-text-encoder-native-vmm` also accepted). Load the Qwen3-VL encoder through DDO's weight-aware loader with native component ownership on `vmm/auto`, instead of Diffusers leaf offload. Not yet measured for this model. |
+| `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 
 | Control | Purpose |
 | --- | --- |

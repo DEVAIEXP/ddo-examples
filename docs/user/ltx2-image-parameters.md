@@ -34,7 +34,7 @@ This naming cleanup does not replace quantized math with a dense linear forward.
 | VMM capacities and execution backing reclaim | Yes | No | No | Yes |
 | `--local-files-only`, `--show-profile`, native encoder/VAE overrides | No | No | No | Yes |
 | `--bits`, `--text-encoder-bits` | No | No | Yes | No |
-| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes | No | No |
+| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | No | Yes (VMM residency profile, `NAME` or `auto`) |
 
 The minimal entry uses its existing component defaults. Linear and SDNQ retain
 their preset-driven profile display; they do not expose a separate profile
@@ -89,7 +89,8 @@ still requires separate validation.
 | `--text-encoder-low-cpu-mem-usage` | Default on; lower-CPU-memory text encoder loading. |
 | `--text-encoder-group-offload` | Explicit encoder group/leaf compatibility override. Omitted inherits environment/preset resolution; ordinary default enabled. |
 | `--text-encoder-dynamic-offload` | Explicit encoder DDO override. Omitted inherits environment/preset resolution; ordinary default disabled. |
-| `--text-encoder-native-vmm` | Default off. Select native encoder ownership independently of the transformer; requires the native `vmm/auto` route and cannot be combined with explicit group-on or dynamic-off compatibility overrides. |
+| `--text-encoder-native-vmm` | Default off (`--no-text-encoder-native-vmm` also accepted). Select native encoder ownership independently of the transformer; requires the native `vmm/auto` route and cannot be combined with explicit group-on or dynamic-off compatibility overrides. The image default stays off until the native encoder is measured for image (the video entries default to it). |
+| `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--vae-leaf-offload` | Default off; explicitly select no-stream leaf VAE offload instead of the resident decoder. |
 
 Boolean loading/group/dynamic controls also accept `--no-...`. The VAE leaf
@@ -124,9 +125,19 @@ switches are independent; level 0 does not mean all monitoring is disabled.
 
 Among the LTX image entries, `--fake-prompt` is available only in
 `run_dynamic_modular_vmm_diagnostics_distilled.py`; it skips real prompt
-encoding and is not a full-pipeline benchmark. Native adapter and workload
-calibration for native VMM also belongs to that diagnostic entry. The BF16
-modular linear runner separately supports `--ddo-profile NAME` and
+encoding and is not a full-pipeline benchmark. Native adapter diagnostics
+also belong to that diagnostic entry.
+
+The native VMM entry `run_dynamic_modular_vmm_distilled.py` accepts
+`--ddo-profile NAME|auto` and `--build-ddo-profile` for the VMM residency
+profile: run the build twice with `--steps 3` (floor, then hardware ceiling;
+each build stops before decode), then generate with the same arguments.
+`auto` names the profile `ltx23-image-<W>x<H>-<digest>` from the resolution and
+the options that change activations (PAG, guidance, sequence length). Without
+an explicit `--ddo-vmm-resident-weight-budget-gb`, `vmm/auto` uses the saved
+profile or DDO's structural floor; the NVMe baseline keeps 2 GiB. See
+[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/native-vmm.md#vmm-residency-profile).
+The BF16 modular linear runner separately supports `--ddo-profile NAME` and
 `--build-ddo-profile`; see the [linear calibration recipe](ltx2-image.md#linear-capacity-profile).
 Profiles and metrics use the [shared switches](runner-controls.md#diagnostics).
 See [developer diagnostics](../developer/diagnostics.md) before interpreting timings.
