@@ -13,9 +13,13 @@ VIDEO_ACTIVATION_OPTIONS = (
 
 
 def workload_profile_name(args, num_frames):
-    """Readable workload shape plus a digest of the options that change activations."""
-    return _generic.workload_profile_name("ltx23-video", f"{args.width}x{args.height}-{num_frames}f", args,
-                                          VIDEO_ACTIVATION_OPTIONS)
+    """Readable workload shape plus a digest of the options that change activations.
+
+    Options added later join the digest only when enabled, so existing profile
+    names (built without them) stay valid.
+    """
+    options = VIDEO_ACTIVATION_OPTIONS + (("frame_modulation",) if getattr(args, "frame_modulation", False) else ())
+    return _generic.workload_profile_name("ltx23-video", f"{args.width}x{args.height}-{num_frames}f", args, options)
 
 
 def resolve_vmm_profile(parser, args, num_frames):

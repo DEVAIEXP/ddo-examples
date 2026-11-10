@@ -98,6 +98,7 @@ overrides rather than these defaults.
 | `--phase-modulation` | On in linear, off in VMM; use phase-local modulation buffers. Linear accepts `--no-phase-modulation`. |
 | `--compact-timesteps` | On in linear, off in VMM; project spatially uniform video timesteps without the dense repeated representation. Unsupported layouts remain dense. Linear accepts `--no-compact-timesteps`. |
 | `--inplace-residuals` | On in linear, off in VMM; reuse model-owned residual states in inference mode. Linear accepts `--no-inplace-residuals`. |
+| `--frame-modulation` | Off; VMM and diagnostics entries. With `--compact-timesteps`, consume the per-frame modulation parameters by broadcasting over each frame's tokens instead of expanding them per token (three token-sized tensors per phase, 1.40 GiB at 1920x1056 with 241 frames). Same elementwise operations and dtype; bit-exact in CPU block tests. Requires custom blocks providing `enable_frame_modulation`; part of the `auto` profile name only when enabled. Not yet validated on the GPU. |
 
 These are custom-block computation options, not generic DDO presets. Preserve
 the exact choices when comparing measurements. Compilation and experimental

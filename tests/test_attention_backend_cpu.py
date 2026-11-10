@@ -52,7 +52,9 @@ def test_qwen_band_decode_options(monkeypatch):
     args = qwen.parse_args(["--vae-no-temporal-cache", "--vae-band-rows", "256"])
     assert (args.vae_band_rows, args.vae_band_blocks) == (256, 2)
     assert qwen.parse_args([]).vae_band_rows is None
-    for bad in (["--vae-band-rows", "256"],  # Requires the single-frame route.
+    # Single-frame decode is the Qwen VMM default (375ecd6); bands need it.
+    assert qwen.parse_args(["--vae-band-rows", "256"]).vae_band_rows == 256
+    for bad in (["--no-vae-no-temporal-cache", "--vae-band-rows", "256"],
                 ["--vae-no-temporal-cache", "--vae-tiling", "--vae-band-rows", "256"],
                 ["--vae-no-temporal-cache", "--vae-band-rows", "0"],
                 ["--vae-band-blocks", "3"]):

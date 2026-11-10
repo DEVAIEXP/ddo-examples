@@ -71,6 +71,8 @@ def parse_args(argv=None):
     parser.add_argument("--normalization-chunk-size", type=int, default=0)
     parser.add_argument("--phase-modulation", action="store_true",
                         help="Opt into phase-local modulation buffers in the updated local Diffusers transformer.")
+    parser.add_argument("--frame-modulation", action="store_true",
+                        help="With --compact-timesteps, consume modulation per frame (broadcast) instead of expanding it per token; bit-exact on CPU, removes the per-token parameter buffers.")
     parser.add_argument("--compact-timesteps", action="store_true",
                         help="Project one video timestep per spatially uniform frame; otherwise retain the dense path.")
     parser.add_argument("--inplace-residuals", action="store_true",
@@ -239,6 +241,7 @@ def describe_plan(args):
         "feed_forward_chunk_size": args.feed_forward_chunk_size,
         "normalization_chunk_size": args.normalization_chunk_size,
         "phase_modulation": args.phase_modulation,
+        "frame_modulation": args.frame_modulation,
         "compact_timesteps_requested": args.compact_timesteps,
         "inplace_residuals_requested": args.inplace_residuals,
         "fused_rms_modulation_requested": args.fused_rms_modulation,
@@ -443,7 +446,7 @@ def run(args):
     device, dtype = "cuda:0", torch.bfloat16
     route = resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset)
     native = route.requires_native_bootstrap
-    native_controls = (args.feed_forward_chunk_size or args.normalization_chunk_size or args.phase_modulation or args.compact_timesteps or args.inplace_residuals or args.fused_rms_modulation or args.fused_rotary_pair or
+    native_controls = (args.feed_forward_chunk_size or args.normalization_chunk_size or args.phase_modulation or args.frame_modulation or args.compact_timesteps or args.inplace_residuals or args.fused_rms_modulation or args.fused_rotary_pair or
                        args.release_pytorch_host_cache_before_transformer or
                        args.detach_transformer_auxiliary_cpu_sources or args.inspect_host_memory_phases)
     if native_controls and not native and not args.fp8_group_offload_control:
@@ -653,6 +656,11 @@ def run(args):
         chunk_handles = []
         if args.phase_modulation:
             transformer.enable_phase_modulation()
+        if args.frame_modulation:
+            if not hasattr(transformer, "enable_frame_modulation"):
+                raise SystemExit("--frame-modulation requires custom blocks providing enable_frame_modulation")
+            transformer.enable_frame_modulation()
+            metrics["frame_modulation_executed"] = True
         if args.inplace_residuals:
             transformer.enable_inplace_residuals()
             metrics["inplace_residuals_executed"] = True
