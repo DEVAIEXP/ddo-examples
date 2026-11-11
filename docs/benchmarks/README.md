@@ -18,6 +18,9 @@ do not combine the fastest rows into an unmeasured pipeline result.
 
 ## Read the tables
 
+See [RC5 validation on Windows](rc5-windows.md) for the profiled video and
+image workloads, frame modulation measurements and encoder comparisons.
+
 See [test hardware and platform limits](hardware.md) for the reference machine
 and the separate Windows, native-Linux and WSL environments.
 
