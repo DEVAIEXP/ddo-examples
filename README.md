@@ -28,7 +28,7 @@ Read the [documentation website](https://devaiexp.github.io/ddo-examples/), incl
 
 Start with the [user guide](docs/user/README.md) to install packages and choose a
 model runner. This path does not require a DDO source checkout or native compiler.
-Experimental packages `0.1.0rc3` are available on PyPI. Follow the package setup
+Experimental packages `0.1.0rc5` are available on PyPI. Follow the package setup
 guide to install DDO, the allocator and runner dependencies in one environment.
 
 Optional LTX video Sol-Attn uses the reviewed source bundled under `kernels/`.
