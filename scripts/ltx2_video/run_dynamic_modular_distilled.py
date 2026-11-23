@@ -143,10 +143,10 @@ def print_linear_memory_policy(settings):
               f"resident ceiling={cap_label}; ceiling is not a target. "
               "Full CPU pinning may select a zero resident-module budget when RAM permits.", flush=True)
     else:
-        print(f"  [dynamic-offload] memory policy: fixed resident-module budget="
+        print(f"  [dynamic-offload] initial configuration (before workload profile): resident-module budget="
               f"{config.resident_module_budget_gb:.2f} GiB, "
               f"CPU pinning requested={config.pin_cpu_memory}. "
-              "This budget does not limit total GPU memory.", flush=True)
+              "A saved workload profile may override this value. This budget does not limit total GPU memory.", flush=True)
 
 
 def move_tensors(value, device):
@@ -294,6 +294,12 @@ def main(*, official_leaf=False):
                                 build_profile=args.build_ddo_profile if name == "transformer" else False,
                                 record_event=tracker.record_event)
         active.append((name, result))
+        if name == "transformer" and result.route == "dynamic_offload":
+            configuration = result.metrics_snapshot().as_dict()["configuration"]
+            budget = configuration.get("dynamic_offload_resident_module_budget_gb")
+            if budget is not None:
+                print(f"  [dynamic-offload] transformer effective resident-module budget={budget:.2f} GiB "
+                      "(after workload profile resolution). This budget does not limit total GPU memory.", flush=True)
         if result.should_move_to_execution_device:
             module.to(device)
         return result
