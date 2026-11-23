@@ -33,7 +33,7 @@ makes a feature available; select it separately in the model's runner.
 
 | If you want to use… | Install… |
 | --- | --- |
-| FlashAttention 2 | A compatible FlashAttention 2 wheel |
+| FlashAttention 2 | The `flash-attn` extra (Python 3.12, Torch 2.12.1+cu132; see your platform section) |
 | Sol-Attn for LTX video | FlashAttention 2 **and** Triton |
 | Saved FP8 weight-only models | The `fp8` extra (TorchAO) |
 | SDNQ quantized models | The `sdnq` extra |
@@ -162,10 +162,20 @@ CPU TorchAudio handles audio decoding; model inference remains CUDA.
 
 ### Optional: FlashAttention 2
 
-Install a Linux wheel matching Python 3.12, Torch 2.12.1, CUDA 13.2 and the
-Torch C++ ABI. The `flash-attn` extra above supplies only a Windows wheel;
-it does not install FlashAttention on Linux or WSL. Replace the path below
-with your compatible wheel:
+The `flash-attn` extra installs a FlashAttention 2.8.3 wheel built by this
+project for Python 3.12, Torch 2.12.1 and CUDA 13.2 on x86-64. WSL2 and
+native Linux receive separate wheels: the extra selects the WSL2 wheel when
+the kernel release contains `microsoft`. Both wheels require glibc 2.34 or
+newer (Ubuntu 22.04 or newer). They are published with their SHA256 hashes in
+the
+[FlashAttention wheels release](https://github.com/DEVAIEXP/ddo-examples/releases/tag/flash-attn-2.8.3-torch2.12.1-cu132-cp312):
+
+```bash
+uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra flash-attn
+```
+
+These wheels match only the Torch build above. For another Torch, CUDA or
+Python version, install your own compatible wheel instead:
 
 ```bash
 uv pip install --python "$python" --no-deps /path/to/compatible-flash-attn.whl

@@ -39,6 +39,8 @@ kernels = [
 sdnq = ["sdnq"]
 flash-attn = [
     "flash-attn @ https://huggingface.co/ussoewwin/Flash-Attention-2_for_Windows/resolve/main/flash_attn-2.9.1%2Bcu132torch2.12.1cxx11abiTRUE-cp312-cp312-win_amd64.whl ; sys_platform == 'win32' and python_version == '3.12'",
+    "flash-attn @ https://github.com/DEVAIEXP/ddo-examples/releases/download/flash-attn-2.8.3-torch2.12.1-cu132-cp312/flash_attn-2.8.3.post2-cp312-cp312-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12' and 'microsoft' in platform_release",
+    "flash-attn @ https://github.com/DEVAIEXP/ddo-examples/releases/download/flash-attn-2.8.3-torch2.12.1-cu132-cp312/flash_attn-2.8.3-cp312-cp312-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.12' and 'microsoft' not in platform_release",
 ]
 
 [dependency-groups]
