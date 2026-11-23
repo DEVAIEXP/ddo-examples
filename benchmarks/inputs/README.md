@@ -1,5 +1,5 @@
 # Benchmark inputs
 
 Place each workload's conditioning media in a directory named after its recipe.
-See the [benchmark capture guide](../../docs/benchmarks/recording.md#local-benchmark-reports)
-for the LTX 2.3 video filenames and reference hashes.
+See the [reproduction guide](../../docs/benchmarks/reproduction.md#prepare-the-environment)
+for the LTX 2.3 video conditioning files. The controller records their hashes.
