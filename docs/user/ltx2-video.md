@@ -8,6 +8,12 @@ Complete [installation](setup.md), including
 [FFmpeg configuration on Windows](setup.md#configure-ffmpeg-on-windows) when
 loading audio.
 
+The default checkpoint is `OzzyGT/LTX-2.3-Distilled-1.1`. Missing files download to the
+standard Hugging Face cache; later runs reuse cached files. Set `HF_HOME` or
+`HF_HUB_CACHE` before running to use your preferred cache drive. Pass
+`--distilled-model /path/to/model` to read an existing local folder directly.
+Use `--local-files-only` only for offline runs with all required files cached.
+
 ## Available runners
 
 | Script in `scripts/ltx2_video/` | Purpose |
@@ -26,111 +32,121 @@ python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py --help
 
 ## Run the model
 
-Choose the platform-specific native recipe in
-[video benchmarks](../benchmarks/ltx23-video.md). The comparison workload is
-1280×704, 5 seconds at 24 fps, 8 steps and seed 43, with guitar-image conditioning.
-Input-audio conditioning is a separate workload.
+The Windows BF16 workload uses 1280×704, 193 frames at 24 fps, eight steps,
+seed 43, and guitar image and audio conditioning. The default checkpoint is `OzzyGT/LTX-2.3-Distilled-1.1`. Configure FFmpeg before running these
+commands. See the [8-second benchmark](../benchmarks/ltx23-video.md#windows-bf16-8-second-pressure-workload)
+for the measured routes and component settings.
 
-For that Windows native workload, the public command uses the documented
-capacities and computation options below. Run in an elevated terminal for the
-explicit Windows purge phases. This command generates video; it is not a dry run.
-
-The transformer residency budget comes from a VMM residency profile instead of
-a fixed value. Build it once per workload and machine by running the same
-command twice with `--build-ddo-profile --steps 3` (about 2 minutes each; each
-build stops before decode), then generate normally:
+### Official Diffusers Leaf
 
 ```powershell
-$recipe = @(
-  "--ddo-backend", "vmm", "--ddo-preset", "auto",
-  "--width", "1280", "--height", "704", "--seconds", "5", "--frame-rate", "24", "--seed", "43",
-  "--ddo-vmm-total-staging-gb", "1.5",
-  "--ddo-vmm-source-cache-gb", "24.625", "--ddo-vmm-source-registered-gb", "24.625",
-  "--ddo-vmm-execution-backing-reclaim",
-  "--feed-forward-chunk-size", "1024", "--normalization-chunk-size", "1024",
-  "--phase-modulation", "--compact-timesteps", "--inplace-residuals",
-  "--decode-device", "cuda:0", "--stream-video-decode",
-  "--purge-before-run", "--purge-after-text-encoder", "--purge-before-transformer", "--no-purge-after-run",
-  "--memory-monitor", "rss", "--metrics-level", "2", "--show-profile", "--show-metrics", "--save-metrics",
-  "--ddo-profile", "auto")
-# Build 1/2 (structural floor) and 2/2 (hardware ceiling), once per workload and machine.
-python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --build-ddo-profile --steps 3
-python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --build-ddo-profile --steps 3
-# Generation with the saved budget.
-python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py @recipe --steps 8
+python -B scripts/ltx2_video/run_diffusers_leaf.py `
+  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 `
+  --use-audio-condition --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 `
+  --video-self-attention default --feed-forward-chunk-size 0 --normalization-chunk-size 0 --no-reuse-rotary-embeddings `
+  --decode-device cuda:0 --stream-video-decode --video-decoder exact-streaming `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/leaf
 ```
 
-`--ddo-profile auto` names the profile from the resolution, frames and the
-activation options, so changing them selects another profile. Without the two
-builds the generation still runs, at DDO's structural floor. On the reference
-Windows 8 GB machine the builds chose that floor (0.629 GiB; the measured
-speedup of a 4.77 GiB ceiling was 0.11 % per GiB, below the threshold; the
-default is now 2 % per GiB).
-An explicit `--ddo-vmm-resident-weight-budget-gb` still overrides the profile.
+### Native VMM: `vmm/auto`
 
-This usage recipe explicitly enables [execution backing reclaim](runner-controls.md#execution-backing-reclaim).
-That opt-in does not change the recorded conditions or results of historical benchmark rows.
+Run the calibration command in elevated PowerShell for the transformer purge.
+If it reports `floor_measured`, run that same command once more to test the
+ceiling. If it reports `final`, use the generation command.
 
-To condition on input audio, add `--use-audio-condition --audio C:/media/song.mp3`
-with your actual file. Keep the same image and audio sources when comparing
-durations; `--seconds 10` changes the duration without replacing either source.
-Conditioned results are separate from the image-only benchmark above.
-
-For GPU temporal decoding, include these options in the selected recipe:
-
-```text
---decode-device cuda:0 --stream-video-decode
+```powershell
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
+  --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
+  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals `
+  --no-ddo-vmm-execution-backing-reclaim `
+  --ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 `
+  --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 --purge-before-transformer `
+  --build-ddo-profile `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 `
+  --use-audio-condition --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 3 --seed 43 `
+  --video-self-attention default --feed-forward-chunk-size 0 --normalization-chunk-size 0 --no-reuse-rotary-embeddings `
+  --decode-device cuda:0 --stream-video-decode --video-decoder exact-streaming `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/vmm-profile
 ```
 
-They are explicit because the current parser still defaults to CPU decode without
-streaming. Temporal streaming reduces the VAE's working set; it does not change
-the transformer route. Audio VAE and vocoder execution are staged separately.
+```powershell
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
+  --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
+  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals `
+  --no-ddo-vmm-execution-backing-reclaim `
+  --ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 `
+  --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 --purge-before-transformer `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 `
+  --use-audio-condition --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 `
+  --video-self-attention default --feed-forward-chunk-size 0 --normalization-chunk-size 0 --no-reuse-rotary-embeddings `
+  --decode-device cuda:0 --stream-video-decode --video-decoder exact-streaming `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/vmm-fast
+```
+
+`--ddo-profile auto` identifies the transformer workload from the resolution,
+frame count and activation settings. Recalibrate when those change. The
+three-step calibration stops before decode. Use `--video-decoder streaming-tiles`
+when the exact streaming decoder exceeds the available VRAM.
 
 ## Runtime and preset selection
 
-### Linear recipe
+### Linear DDO
 
-`run_dynamic_modular_distilled.py` defaults to the recorded linear computation
-settings: feed-forward and normalization chunks of 1024, phase modulation,
-compact timesteps, inplace residuals and RoPE reuse. These are model computation
-options, separate from the DDO memory plan. Minimal and SDNQ entries do not
-inherit these defaults.
+Calibrate each preset using the command in
+[Linear capacity profile](#linear-capacity-profile). Use elevated PowerShell on
+Windows for the transformer purge.
+
+**`one_shot_fast`**
 
 ```powershell
 python -B scripts/ltx2_video/run_dynamic_modular_distilled.py `
-  --ddo-backend linear --ddo-preset one_shot_fast `
-  --width 1280 --height 704 --seconds 5 --frame-rate 24 --steps 8 --seed 43 `
-  --decode-device cuda:0 --stream-video-decode `
-  --purge-before-run --purge-after-text-encoder --purge-before-transformer --no-purge-after-run `
-  --memory-monitor rss --show-profile --show-metrics --save-metrics
+  --ddo-backend linear --ddo-preset one_shot_fast --ddo-profile ltx23-video-1280x704-8s-8steps-one-shot-fast `
+  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals --purge-before-transformer `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 `
+  --use-audio-condition --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 `
+  --video-self-attention default --feed-forward-chunk-size 0 --normalization-chunk-size 0 --no-reuse-rotary-embeddings `
+  --decode-device cuda:0 --stream-video-decode --video-decoder exact-streaming `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/one-shot-fast
 ```
 
-Input audio remains optional: add `--audio C:/media/song.mp3 --use-audio-condition`
-to preserve your conditioning source. That changes the workload relative to the
-historical image-conditioned benchmark without input audio.
+**`low_ram_safe`**
 
-The memory plan remains automatic. The recorded Windows linear run selected
-full CPU weight pinning and a zero automatic resident-module budget. This is
-not a fixed 6 GiB GPU recipe: available RAM determines whether the same plan is
-admissible today. `pin=skip_insufficient_ram` indicates a different plan and can
-affect latency. Computation defaults alone do not guarantee the historical time.
-CPU decode remains the parser default; the recipe explicitly selects temporal
-GPU decoding. Run elevated on Windows to preserve the requested purge phases.
+```powershell
+python -B scripts/ltx2_video/run_dynamic_modular_distilled.py `
+  --ddo-backend linear --ddo-preset low_ram_safe --ddo-profile ltx23-video-1280x704-8s-8steps-low-ram-safe `
+  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals --purge-before-transformer `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 `
+  --use-audio-condition --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 `
+  --video-self-attention default --feed-forward-chunk-size 0 --normalization-chunk-size 0 --no-reuse-rotary-embeddings `
+  --decode-device cuda:0 --stream-video-decode --video-decoder exact-streaming `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/low-ram-safe
+```
 
-`linear/auto` selects `one_shot_fast`; reducing a resident ceiling does not select
-`low_ram_safe`. In particular, `DDO_MAX_RESIDENT_MODULE_BUDGET_GB=3` only caps the
-automatic resident-module budget. Full CPU pinning can still select a zero budget.
-To request the conservative linear policy, explicitly use
-`--ddo-preset low_ram_safe`: its defaults disable automatic budgeting and CPU
-pinning and set a 3 GiB resident-module budget. Neither value limits total GPU
-memory. Explicit environment settings can override preset defaults; remove a
-temporary override after its test. The startup log distinguishes the selected
-preset, automatic ceilings and fixed budgets.
+The named profiles apply the calibrated resident-module budget. The Windows
+8-second comparison used 0 GiB for both linear presets. See [presets](presets.md)
+for memory trade-offs and [shared controls](runner-controls.md) for purge options.
 
-Use [presets](presets.md) for backend and memory tradeoffs.
-`--distilled-model` selects the BF16 pipeline/auxiliary source; `--model-path` overrides
-only the transformer. Native encoder offload is a separate option with its own
-capacity. Windows standby purge uses the [shared controls](runner-controls.md).
+On native Linux, the linear runner releases unused PyTorch pinned host cache
+after retiring the transformer and before loading the VAE. This default applies
+to DDO linear presets; Windows, WSL, compatibility routes and the dedicated
+official Leaf runner keep their existing defaults. Use
+`--no-release-pytorch-host-cache-before-vae` to disable or
+`--release-pytorch-host-cache-before-vae` to enable explicitly. The release time
+is included in the tracked total, with counters recorded in the JSON. It is
+separate from standby purge. The selected Linux 8-second One Shot Fast run
+completed with this cleanup and produced the same MP4 as the Leaf control.
+This is one workload observation; other presets and hardware need validation.
 
 ## Optional LoRA
 
@@ -164,7 +180,7 @@ a reliable activation check.
 
 ## Optional weight formats
 
-### SDNQ
+### SDNQ INT4
 
 Install only the SDNQ optional backend; FP8 is not a prerequisite.
 Use `--bits 4` or `--bits 8` in the SDNQ runner to choose the corresponding
@@ -172,16 +188,78 @@ saved OzzyGT transformer. Auxiliary components remain BF16.
 `--ddo-preset diffusers_leaf_offload_compat` selects its Diffusers leaf control.
 Image measurements do not establish video performance.
 
-### FP8 weight-only
+The following command matches the eight-second INT4 benchmark workload:
+Leaf encoder and conditioning, resident VAE with CUDA exact-streaming, default
+SDPA, no purge and no model optimizations. Configure FFmpeg as described above.
+The runner downloads the selected transformer from
+`OzzyGT/LTX-2.3-Distilled-1.1-sdnq-dynamic-int4` and uses the original BF16
+checkpoint for auxiliary components. Cached Hub files are reused;
+`--model-path` accepts a local SDNQ transformer directory.
 
-Install the optional `fp8` dependencies and supply a previously saved supported
-TorchAO FP8 weight-only transformer:
-
-```text
---model-path F:/models/your-converted-model --transformer-fp8-weight-only
+```powershell
+python -B scripts/ltx2_video/run_dynamic_modular_sdnq_distilled.py `
+  --bits 4 --ddo-backend linear --ddo-preset one_shot_fast `
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video `
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png `
+  --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 --use-audio-condition `
+  --prompt 'the man plays the guitar and sings on an old western town' `
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 `
+  --video-self-attention default --no-reuse-rotary-embeddings `
+  --stream-video-decode --video-decoder exact-streaming --decode-device cuda:0 `
+  --ddo-profile ltx23-video-1280x704-8s-8steps-sdnq-int4 `
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video/sdnq-int4
 ```
 
-Add these to the VMM recipe, keeping its auxiliary BF16 pipeline source.
+Before generation, run this command with `--build-ddo-profile` and a separate
+output directory. It measures the first two steps of the eight-step schedule
+without decode. If the report says `probe_pending`, replace that flag with
+`--validate-ddo-profile` for a two-step validation. Use the generation command
+only after the profile is final. BF16 linear and VMM profiles are separate.
+
+For the Leaf transformer control, replace the preset with
+`--ddo-preset diffusers_leaf_offload_compat` and omit `--ddo-profile`.
+See the [benchmark recipe](../benchmarks/reproduction.md#ltx-video-saved-sdnq-int4-pair).
+This video comparison remains under investigation; the recipe is not a
+recommendation for faster generation than BF16.
+
+### FP8 weight-only
+
+Install the optional `fp8` dependencies. The saved TorchAO FP8 weight-only
+transformer is published at
+[`elismasilva/ltx2.3_video_fp8_distilled_transformer`](https://huggingface.co/elismasilva/ltx2.3_video_fp8_distilled_transformer).
+The runner accepts this Hub ID or an existing local directory and resolves it
+before measured execution. Hub downloads use the standard Hugging Face cache
+(`HF_HOME`/`HF_HUB_CACHE` when configured).
+
+For the eight-second Linux recipe without model optimizations, pass the
+parameters directly and configure FFmpeg as described above. Both the original
+BF16 checkpoint and the FP8 transformer use their default Hub IDs.
+
+```bash
+python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py \
+  --ddo-backend vmm --ddo-preset auto \
+  --transformer-fp8-weight-only \
+  --custom-blocks modular_diffusers/custom_blocks/ltx2_video \
+  --image benchmarks/inputs/ltx23-video-5s/man_guitar.png \
+  --audio benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3 --use-audio-condition \
+  --prompt "the man plays the guitar and sings on an old western town" \
+  --width 1280 --height 704 --seconds 8 --frame-rate 24 --steps 8 --seed 43 \
+  --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 \
+  --ddo-vmm-total-staging-gb 1.5 \
+  --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 \
+  --no-ddo-vmm-execution-backing-reclaim \
+  --video-self-attention default \
+  --feed-forward-chunk-size 0 --normalization-chunk-size 0 \
+  --no-reuse-rotary-embeddings \
+  --stream-video-decode --video-decoder exact-streaming --decode-device cuda:0 \
+  --ddo-profile ltx23-video-1280x704-8s-8steps-vmm-fast-fp8-weight-only \
+  --memory-monitor rss --save-metrics --output-dir outputs/ltx23-video-fp8-8s
+```
+
+The auxiliary pipeline source remains BF16. Model optimizations, compilation,
+reclaim and Linux purge are off. Create the FP8-specific capacity profile
+before this direct inference command; the benchmark controller handles that
+calibration automatically. A BF16 profile is not an FP8 profile.
 The flag does not convert BF16 weights or accept arbitrary FP8 checkpoints.
 It reduces weight storage; it does not promise FP8 compute or faster generation.
 Compilation is not required. See DDO's
@@ -197,29 +275,19 @@ Use `--memory-monitor rss` for comparisons with the RSS benchmark tables.
 
 ### Linear capacity profile
 
-Calibrate the conditioned five-second guitar workload below. Use your actual
-image/audio paths and an elevated terminal on Windows for purge. This runs the
-eight denoise steps with calibration enabled and stops before decode/export.
+Use the complete eight-second command for `one_shot_fast` or
+`low_ram_safe` above and add `--build-ddo-profile`. Keep its own profile
+name, all eight steps, the guitar image/audio and prompt, default SDPA,
+disabled model optimizations, exact-streaming decoder and pre-transformer
+purge. Calibration stops before decode/export. Then remove
+`--build-ddo-profile` and select another output directory for generation.
+Do not use a five-second or feature-enabled profile for this workload.
 
-```powershell
-python -B scripts/ltx2_video/run_dynamic_modular_distilled.py `
-  --ddo-backend linear --ddo-preset one_shot_fast `
-  --width 1280 --height 704 --seconds 5 --frame-rate 24 --steps 8 --seed 43 `
-  --image C:/media/man_guitar.png --audio C:/media/song.mp3 --use-audio-condition `
-  --ddo-profile ltx-video-bf16-1280x704-5s-conditioned --build-ddo-profile `
-  --decode-device cuda:0 --stream-video-decode `
-  --purge-before-transformer --memory-monitor rss --save-metrics `
-  --output-dir outputs/ltx_video_linear_profile
-```
-
-The decode options are included for subsequent generation; calibration stops
-before decode and does not measure decoder time or memory. To generate using the
-profile, remove `--build-ddo-profile` and choose a new output directory. Keep
-`--decode-device cuda:0 --stream-video-decode` for the GPU streaming decoder.
-The linear computation defaults remain chunks of 1024,
-phase modulation, compact timesteps, inplace residuals and RoPE reuse. Recalibrate
-under a different name when changing duration, resolution, conditioning or math
-options. See [profile storage and scope](runner-controls.md#persistent-capacity-profiles-for-linear-runners).
+The Windows comparison applied a zero resident-module budget for these
+linear presets. Use a clean shell without inherited DDO budget overrides
+so the saved profile remains authoritative. The native source dispatcher
+stays enabled by its public DDO default in VMM Fast.
+See [profile storage and scope](runner-controls.md#persistent-capacity-profiles-for-linear-runners).
 
 See [video parameters](ltx2-video-parameters.md) and
 [shared controls](runner-controls.md). Compute experiments are optional, not

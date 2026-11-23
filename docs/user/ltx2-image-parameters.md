@@ -18,8 +18,9 @@ Each entry exposes only implemented controls; shared controls keep one spelling.
 | `run_dynamic_modular_vmm_diagnostics_distilled.py` | Existing fixed local clone | Separate full native experiment interface, intentionally broader than the public entry. |
 
 All four public entries use the shared parameter vocabulary. Select the runtime with
-`--ddo-backend` and `--ddo-preset`; the three non-VMM entries support backend
-`linear` only and default to preset `auto`. SDNQ preserves its packed forward
+`--ddo-backend` and `--ddo-preset`. The minimal entry uses `vmm/auto`;
+the linear and SDNQ entries support backend `linear` only and default to
+preset `auto`. SDNQ preserves its packed forward
 and supports `auto`, `one_shot_fast`, `low_ram_safe`, `wsl_compat`, `warm_process`
 and `diffusers_leaf_offload_compat`. The latter selects the official leaf control.
 This naming cleanup does not replace quantized math with a dense linear forward.
@@ -32,9 +33,11 @@ This naming cleanup does not replace quantized math with a dense linear forward.
 | `--metrics-level`, decode timestep/noise, PAG, loading controls | No | Yes | Yes | Yes |
 | `--text-encoder-dynamic-offload` | No | Yes | No | Yes |
 | VMM capacities and execution backing reclaim | Yes | No | No | Yes |
-| `--local-files-only`, `--show-profile`, native encoder/VAE overrides | No | No | No | Yes |
+| `--warm-process-reuse` (two preparations, two generations, final decode only; requires `linear/warm_process`) | No | Yes | No | No |
+| `--local-files-only` | No | Yes | Yes | Yes |
+| `--show-profile`, native encoder/VAE overrides | No | No | No | Yes |
 | `--bits`, `--text-encoder-bits` | No | No | Yes | No |
-| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | No | Yes (VMM residency profile, `NAME` or `auto`) |
+| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | Yes (dedicated SDNQ capacity profile) | Yes (VMM residency profile, `NAME` or `auto`) |
 
 The minimal entry uses its existing component defaults. Linear and SDNQ retain
 their preset-driven profile display; they do not expose a separate profile
@@ -44,8 +47,10 @@ capacity calibration as shown below. Their output directories default to `output
 SDNQ accepts `--bits 4` (default) or `8` for transformer checkpoint selection;
 `--text-encoder-bits` is unset by default (original encoder) and accepts `8` only.
 In SDNQ, `--model-path` selects the
-auxiliary pipeline weights; the packed transformer and text encoder sources
-remain selected by their bit-depth settings. The default text encoder group
+auxiliary pipeline weights. `--sdnq-model-path DIRECTORY` selects a saved packed
+transformer root; otherwise its bit-depth setting selects the repository.
+The packed text encoder source, when requested, uses that same root.
+The default text encoder group
 offload is enabled. No unimplemented dynamic encoder option is accepted.
 
 ## Execution
@@ -55,7 +60,7 @@ offload is enabled. No unimplemented dynamic encoder option is accepted.
 | `--model-path PATH_OR_ID` | Pipeline checkpoint. Default `elismasilva/ltx2.3-image-distilled-1.1`, overridable by the `MODEL_PATH` environment variable. |
 | `--custom-blocks SOURCE` | Trusted executable LTX image code: a local directory containing `modular_config.json` or a Hub repository. Defaults to the existing `modular_diffusers/custom_blocks/ltx2_image` clone under the examples root. |
 | `--custom-blocks-revision REVISION` | Optional Hub code revision; prefer a commit SHA. Rejected for local directories; does not switch a local Git branch. |
-| `--local-files-only` | VMM only, default off; require cached weights/code rather than downloading. |
+| `--local-files-only` | Linear, SDNQ and VMM; default off. Require cached weights/code rather than downloading. |
 | `--device` | Execution device; default `cuda:0`. Does not establish support for other devices. |
 | `--prompt TEXT` | Text conditioning; default is the calico-cat/fisheye/flower-crown prompt in the runner. |
 | `--negative-prompt TEXT` | Negative conditioning; default empty. |
@@ -92,7 +97,7 @@ still requires separate validation.
 | `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes or with an explicit group-on/dynamic-off encoder override); `--no-text-encoder-native-vmm` selects leaf group offload. Native encoder ownership is independent of the transformer and cannot be combined with explicit group-on or dynamic-off compatibility overrides. A measured 1280x704 Windows pair (standby purge before run) encoded in 10.65 s versus 17.27 s with leaf, peak RSS 3.55 GB versus 25.9 GB, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--vae-leaf-offload` | Default off; explicitly select no-stream leaf VAE offload instead of the resident decoder. |
-| `--attention-backend default\|cudnn` | VMM entry. Default `default` (PyTorch's SDPA order). `cudnn` prefers flash > cuDNN > memory-efficient > math during the denoise only; ineligible inputs fall back. Kernels change, model math does not, but outputs can differ numerically: compare images before adopting it. Part of the `auto` profile name. Not yet measured for LTX image. |
+| `--attention-backend default\|cudnn` | Main VMM runner. The default keeps PyTorch's SDPA order. Opt-in `cudnn` sets the denoise priority to PyTorch flash > cuDNN > memory-efficient > math, with fallback for ineligible calls. It can be used on its own and may change the output numerically. The setting contributes to the `auto` profile name. |
 
 Boolean loading/group/dynamic controls also accept `--no-...`. The VAE leaf
 override accepts `--no-vae-leaf-offload`. This entry does not expose native idle
@@ -137,8 +142,24 @@ each build stops before decode), then generate with the same arguments.
 the options that change activations (PAG, guidance, sequence length). Without
 an explicit `--ddo-vmm-resident-weight-budget-gb`, `vmm/auto` uses the saved
 profile or DDO's structural floor; the NVMe baseline keeps 2 GiB. See
-[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/native-vmm.md#vmm-residency-profile).
+[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/capacity-profiles.md#vmm-residency-profile).
 The BF16 modular linear runner separately supports `--ddo-profile NAME` and
 `--build-ddo-profile`; see the [linear calibration recipe](ltx2-image.md#linear-capacity-profile).
+The SDNQ runner uses its own named profile with `--ddo-profile NAME`.
+`--build-ddo-profile` measures a zero-resident baseline; if DDO reports a
+pending probe, run `--validate-ddo-profile` with the same name and workload.
+Both stages use two denoise steps by default and stop before VAE decode.
+Validation excludes `--build-ddo-profile`. Generate with the same profile
+after it is final. BF16 linear and VMM profiles are not substitutes.
 Profiles and metrics use the [shared switches](runner-controls.md#diagnostics).
 See [developer diagnostics](../developer/diagnostics.md) before interpreting timings.
+
+## Experimental native VAE
+
+On the modular VMM runner, `--vae-vmm-offload` requires the fast VMM route,
+a positive
+`--vae-vmm-resident-weight-budget-gb`. Validate output and phase timings on
+your hardware before selecting this route.
+
+The VAE defaults to the selected pipeline checkpoint's `vae` subfolder.
+Use `--vae-model-path PATH_OR_ID` for a standalone VAE or pipeline override.

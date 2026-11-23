@@ -23,16 +23,33 @@ a GPU comparison. Keep model revisions, precision, inputs, schedule, encoder/VAE
 routes and monitoring consistent. Stop on errors or unexplained anomalies;
 preserve the report before changing the configuration.
 
-Validate output correctness as well as timing. Compare denoise and tracked total
-separately; do not sum nested phases or treat missing metrics as zero.
+Validate output correctness as well as timing. Compare full-run, denoising and
+isolated VAE decode latency and peaks separately. Full run includes all tracked
+phases; isolated decode excludes saving. Do not sum nested phases, substitute
+aggregate peaks for missing phase data or treat unavailable metrics as zero.
 Changes to shared helpers need regression coverage for their affected runners,
 not only the model that motivated the change.
 
 Completed selected workloads and their limits are summarized in
 [benchmarks by model](../benchmarks/README.md).
-See [recording rules](../benchmarks/recording.md) for measurement requirements
+See the [reproduction guide](../benchmarks/reproduction.md#publish-benchmark-tables) for measurement requirements
 and [DDO validation](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/developer/validation.md)
 for native runtime/package contracts.
+
+## Benchmark controller checks
+
+Use the [reproduction guide](../benchmarks/reproduction.md) for the public queue,
+preflight and continuation workflow. CPU contracts cover command generation,
+profile compatibility, effective routes, dispatcher requirements, output
+verification and session locks. Preflight validates identities without CUDA;
+neither it nor CPU mocks establishes model execution acceptance.
+
+A completed case requires a successful child exit, valid metrics and verified
+media. Preserve rejected attempts. Resume only a compatible session after
+resolving the failure; do not edit its manifest to bypass identity checks.
+Attention operator diagnostics are separate from performance measurements.
+Feature-series acceptance also compares outputs against the control and the
+parent of each branch. Pixel equality and visual approval are separate findings.
 
 ## WSL staging constraints
 

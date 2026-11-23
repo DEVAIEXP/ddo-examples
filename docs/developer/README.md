@@ -7,7 +7,7 @@ working on runners, model integration or delivery.
 - [Editable source and platform setup](setup.md)
 - [Runner architecture and ownership](architecture.md)
 - [Diagnostics and reporting](diagnostics.md)
-- [Runner interface compatibility](runner-interface.md)
+- [Runner interface contract](runner-interface.md)
 - [Validation and evidence requirements](validation.md)
 - [Release procedure](releases.md)
 - [Local browser documentation preview](docs-preview.md)

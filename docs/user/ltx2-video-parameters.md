@@ -63,7 +63,7 @@ Capacities use GiB; they are independent limits, not total GPU usage.
 | `--ddo-vmm-execution-backing-reclaim` | False; opt into reclaim of eligible idle execution backing under pressure. Requires `vmm/auto`; the environment variable does not enable it in public VMM entries. See [behavior and tradeoffs](runner-controls.md#execution-backing-reclaim). |
 | `--text-encoder-native-vmm` | On for `vmm/auto` (Minimal and Native VMM entries), off otherwise: the Gemma text encoder is loaded through DDO's weight-aware loader with native component ownership. `--no-text-encoder-native-vmm` restores Diffusers leaf group offload. Requesting it on another route is rejected. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native text encoder; encoder-only capacity, separate from the transformer ceiling. Two execution slots of the largest encoder component must fit (0.625 GiB is refused at attachment). Rejected when the native text encoder is off. |
-| `--transformer-fp8-weight-only` | Off; load supported saved TorchAO FP8 weights. Requires native fast, a local `--model-path` and `--local-files-only`; does not convert BF16 weights. |
+| `--transformer-fp8-weight-only` | Off; load saved TorchAO FP8 weights. Requires native fast; defaults to `elismasilva/ltx2.3_video_fp8_distilled_transformer`. Override with `--model-path PATH_OR_ID`; does not convert BF16 weights. |
 | `--release-pytorch-host-cache-before-transformer` | Off; request PyTorch host-cache release at the phase boundary. Separate from Windows standby purge and native source-cache capacity. |
 
 VMM residency profile example (two builds, then reuse):
@@ -110,7 +110,7 @@ fused RMS/rotary kernels belong in the [diagnostics entry](../developer/diagnost
 | --- | --- |
 | `--decode-device` | `cpu`; choose `cuda:0` explicitly for GPU decoding. |
 | `--stream-video-decode` | Off; temporal window decoding requires `--decode-device cuda:0`. |
-| `--video-decoder` | `streaming-tiles`; used with `--stream-video-decode`. `streaming-tiles` decodes overlapping temporal windows and blends them. `exact-streaming` runs the VAE decoder over the whole sequence in temporal streaming, without window seams or overlap recomputation; it needs custom blocks that export `LTX2VideoExactStreamingDecoderStep` and a VAE without decoder timestep conditioning. |
+| `--video-decoder` | With `--stream-video-decode`, LTX Video runners default to `exact-streaming`. It processes the whole sequence in temporal order without window seams or overlap recomputation. It requires custom blocks that export `LTX2VideoExactStreamingDecoderStep` and a VAE without decoder timestep conditioning. Use `--video-decoder streaming-tiles` when VRAM is tight. It decodes overlapping temporal windows and blends them. |
 | `--vae-leaf-offload` | Off, VMM only; requires GPU streaming. Audio VAE and vocoder routes stay separate. |
 | `--output-type` | `video`, VMM only; `latent` skips output decoding and cannot be combined with streaming. |
 | `--output-dir` | `outputs/ddo_modular_video`, or `outputs/ddo_modular_sdnq_video` for SDNQ. |
@@ -125,6 +125,7 @@ See [Windows standby purge](runner-controls.md#windows-standby-purge).
 | Control | Default and meaning |
 | --- | --- |
 | `--memory-monitor` | `rss`; `full` additionally collects USS and can add overhead. |
+| `--release-pytorch-host-cache-before-vae` | Linear runner only: on by default for DDO linear presets on native Linux; off on Windows, WSL and compatibility/off routes. Releases unused PyTorch pinned host blocks after transformer retirement and before loading the VAE. Use `--no-release-pytorch-host-cache-before-vae` to disable, or the positive flag to enable explicitly. The dedicated official Leaf runner is unchanged. |
 | `--metrics-level` | 2 in VMM; accepts 0/1/2. Level 2 records public DDO component snapshots. |
 | `--show-profile` | Off; display the component profile. |
 | `--show-metrics`, `--save-metrics` | Both on; display observations and save JSON. |
@@ -134,6 +135,16 @@ See [Windows standby purge](runner-controls.md#windows-standby-purge).
 Display/save switches accept their `--no-...` forms. Phase observations do not
 prove GPU completion or local VRAM placement. CPU parser checks do not establish
 GPU or performance acceptance.
+
+Host-cache release uses DDO's public cleanup helper and completes pending device
+transfers before releasing unused host blocks. It preserves live tensors and
+native source storage. It is separate from Windows standby purge. Reports contain
+the release status, elapsed time, host-allocator counters and process RSS before
+and after the call where available. Its time is included in the tracked total
+and recorded as a separate event before decode. Profile calibration ends before
+this boundary. The native Linux default has CPU contract coverage and completed
+one 8-second One Shot Fast measurement with output identical to the Leaf control.
+Other presets and hardware require separate validation.
 ## Video self-attention backend
 
 `--trace-attention-operators` (off by default) profiles the PyTorch attention
@@ -154,11 +165,17 @@ eligible video self-attention. Audio, cross-attention, and masked or perturbed c
 their original routes. Saved metrics include per-layer dispatch counts.
 
 Install the optional FlashAttention 2 wheel as described in [Setup](setup.md).
-For Sol-Attn, make the Sana `techniques/sparse_backends` directory importable
-in the runner environment. The tested Sana revision is
+For Sol-Attn, the examples include the reviewed source in `kernels/sol_attn`.
+All LTX video entries use the same lazy loader on Windows, native Linux and WSL;
+no separate Sana checkout, `.pth` or `PYTHONPATH` is needed. Install the optional
+dependencies using [Sol-Attn setup](setup.md#optional-sol-attn-for-ltx-video).
+The bundled Sana revision is
 [`781e834`](https://github.com/NVlabs/Sana/commit/781e8341fb3b29d3aea5d50265772e9619340b66).
 The selected GPU validation used the VMM Distilled runner on an RTX 3060 Ti.
 Sol-Attn accepts dynamic token counts and requires CUDA BF16 video attention
-with head dimension 128. The validated recipe used 14,080 video tokens
-(1280 × 704, 5 seconds at 24 fps). A 10-second run encountered an illegal
-CUDA memory access during denoising. Its cause remains under investigation.
+with head dimension 128 and the upstream Triton backend. The current
+[Windows and Linux benchmark](../benchmarks/ltx23-video.md) includes the
+1280×704, 8-second workload. Shared loading across runners does not establish
+GPU acceptance for every runtime, shape or GPU architecture. The vendored-copy
+integration is checked in CPU tests separately from the recorded upstream-source
+GPU measurements.

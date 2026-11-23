@@ -42,7 +42,7 @@ uv pip check --python "$python"
 .venv-linux/bin/python -B scripts/setup_custom_blocks.py
 ```
 
-For WSL substitute `.venv-wsl-gpu` in both commands.
+For WSL substitute `.venv-wsl-gpu` throughout the Linux commands.
 
 ### Windows PowerShell
 
@@ -56,15 +56,24 @@ uv pip check --python $python
 .venv/Scripts/python.exe -B scripts/setup_custom_blocks.py
 ```
 
-Use explicit interpreter paths. Optional extras are `fp8`, `kernels` and `sdnq`;
-install them through the package setup before switching to editable sources.
+Use explicit interpreter paths. Optional extras include `fp8`, `kernels` and
+`sdnq`; FlashAttention 2 has platform-specific wheel instructions in the package
+guide. Sol-Attn needs both FlashAttention 2 and Triton, plus the source already
+included in this checkout. Install the required optional dependencies through
+the package setup before switching to editable sources.
 `--no-deps` above changes only the two source packages, preserving the model
 dependencies. Editable installation is for development, not release validation.
 
 ## Dependencies and native builds
 
 The dependency constraints retain official Diffusers 0.41.0 and Torch 2.12.1+cu132.
-Do not inject an editable Diffusers fork or historical host via PYTHONPATH.
+`PYTHONPATH` adds source directories to Python's import search path.
+`DDO_VMM_LIBRARY_PATH` explicitly selects a native allocator library, overriding
+automatic discovery from the installed package. These overrides can be useful
+for isolated development checks, but can also mix source and binary versions.
+Keep them scoped to the intended development command; do not carry development
+checkouts or old builds into package-install environments. Do not inject an
+editable Diffusers fork or historical host via `PYTHONPATH`.
 Linux/WSL TorchAudio 2.11.0+cpu is for audio decoding, not CPU model inference.
 TorchCodec/PyAV need compatible system FFmpeg shared libraries: Ubuntu 22.04 uses
 `ffmpeg`; FFmpeg package/library names vary by distribution.
@@ -80,8 +89,12 @@ arbitrary experimental builds. WSL keeps the Windows-provided GPU driver.
 
 Clones under ignored `modular_diffusers/custom_blocks/` are independent Git
 repositories, not submodules or vendored source. Review executable code and pin
-revisions. The helper refuses mismatched existing checkouts. Read each clone's
-instructions before editing and commit its changes in that repository.
+revisions. The helper preserves existing checkouts without fetching, pulling or
+resetting them; it rejects an unexpected origin or an explicit revision mismatch.
+Without `--revision`, a new clone follows `main`, so record its resolved commit
+before validation. The benchmark preflight additionally requires its reviewed
+clean revision. Read each clone's instructions before editing and commit its
+changes in that repository.
 Weights are obtained separately under their licenses.
 
 ## Validation boundaries

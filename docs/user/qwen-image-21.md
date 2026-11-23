@@ -1,10 +1,20 @@
 # Qwen Image 2.1
 
+Use `--image-joint-attention cudnn` to request cuDNN SDPA for the joint
+text/image attention. The default is SDPA. The external FlashAttention 2
+backend cannot consume the joint padding mask used by this recipe.
+
 ## Model and requirements
 
 The runners use
 [Qwen Image 2.1 custom blocks](https://huggingface.co/elismasilva/qwen_image_2.1_custom_blocks)
 with official Diffusers. Complete [installation](setup.md) first.
+
+The default checkpoint is `Qwen/Qwen-Image-2.1`. Missing files download to the
+standard Hugging Face cache; later runs reuse cached files. Set `HF_HOME` or
+`HF_HUB_CACHE` before running to use your preferred cache drive. Pass
+`--model-path /path/to/model` to read an existing local folder directly.
+Use `--local-files-only` only for offline runs with all required files cached.
 
 ## Available runners
 
@@ -25,95 +35,182 @@ python -B scripts/qwen_image_21/run_dynamic_modular.py --help
 
 ## Run the model
 
-### Linear DDO: one_shot_fast
+The Windows BF16 examples below reproduce the current 1024×1024 runtime
+workloads through the public runners, without the benchmark controller.
+Use the Base checkpoint snapshot `d26bb61231c349cf6b7896fa83353113880e1ba3`
+and reviewed custom blocks from [measurement details](../benchmarks/qwen-image-21-details.md).
+Replace the local checkpoint and standalone BF16 VAE paths with your own.
+Run from an activated, installed RC5 environment without inherited DDO budget,
+purge or attention overrides. Use the same environment for calibration and inference.
+All primary recipes use default SDPA, the standard KV cache, no purge,
+and no single-frame, alias, band, padding, tiling or compile optimizations.
+The feature recipe below is separate from the runtime comparison.
 
-This base recipe fixes the 512-square comparison workload:
+### Official Diffusers Leaf
+
+No DDO capacity profile is required. Encoder, transformer and VAE use Leaf.
 
 ```powershell
-python -B scripts/qwen_image_21/run_dynamic_modular.py --variant base --width 512 --height 512 --steps 20 --seed 42 --ddo-preset one_shot_fast --text-encoder-preset diffusers_leaf_offload_compat --vae-resident --purge-before-transformer --memory-monitor rss --show-metrics --save-metrics
+python -B scripts/qwen_image_21/run_diffusers_leaf.py `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --width 1024 `
+  --height 1024 `
+  --steps 20 `
+  --seed 42 `
+  --memory-monitor rss `
+  --metrics-level 2 `
+  --save-metrics `
+  --vae-leaf-offload `
+  --image-joint-attention default `
+  --output-dir outputs/qwen-image21/official-leaf
 ```
 
-It uses the default capybara prompt. Run elevated on Windows for standby purge;
-outside Windows purge is a no-op. Exact platform comparisons and native recipes
-are in [Qwen benchmarks](../benchmarks/qwen-image-21.md).
+### Linear DDO: `one_shot_fast`
 
-### Native VMM: vmm/auto on Windows
+Before generation, run this same command with `--build-ddo-profile`. Keep all 20 steps for the linear calibration. Calibration stops before decode; keep the same profile name and use a separate output directory.
 
-After installing the native allocator through the [setup guide](setup.md), run:
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular.py `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --width 1024 `
+  --height 1024 `
+  --steps 20 `
+  --seed 42 `
+  --memory-monitor rss `
+  --metrics-level 2 `
+  --save-metrics `
+  --vae-leaf-offload `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-backend linear `
+  --ddo-preset one_shot_fast `
+  --ddo-profile qwen-image21-1024x1024-20steps-one-shot-fast `
+  --output-dir outputs/qwen-image21/one-shot-fast
+```
+
+### Linear DDO: `low_ram_safe`
+
+Before generation, run this same command with `--build-ddo-profile`. Keep all 20 steps for the linear calibration. Calibration stops before decode; keep the same profile name and use a separate output directory.
+
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular.py `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --width 1024 `
+  --height 1024 `
+  --steps 20 `
+  --seed 42 `
+  --memory-monitor rss `
+  --metrics-level 2 `
+  --save-metrics `
+  --vae-leaf-offload `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-backend linear `
+  --ddo-preset low_ram_safe `
+  --ddo-profile qwen-image21-1024x1024-20steps-low-ram-safe `
+  --output-dir outputs/qwen-image21/low-ram-safe
+```
+
+### VMM Fast with native BF16 VAE
+
+Before generation, run this same command with `--build-ddo-profile`. Use `--steps 3` for calibration and repeat once only if the profile reports `floor_measured`; restore `--steps 20` for generation. Calibration stops before decode; keep the same profile name and use a separate output directory.
 
 ```powershell
 python -B scripts/qwen_image_21/run_dynamic_modular_vmm.py `
-  --width 512 --height 512 --steps 20 --seed 42 `
-  --ddo-vmm-resident-weight-budget-gb 4 `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --width 1024 `
+  --height 1024 `
+  --steps 20 `
+  --seed 42 `
+  --memory-monitor rss `
+  --metrics-level 2 `
+  --save-metrics `
+  --vae-vmm-offload `
+  --vae-vmm-resident-weight-budget-gb 0.375 `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-backend vmm `
+  --ddo-preset auto `
+  --no-ddo-vmm-execution-backing-reclaim `
+  --text-encoder-native-vmm `
+  --no-vae-no-temporal-cache `
+  --image-joint-attention default `
   --ddo-vmm-total-staging-gb 0.625 `
   --ddo-vmm-source-cache-gb 16 `
   --ddo-vmm-source-registered-gb 16 `
-  --ddo-vmm-execution-backing-reclaim `
-  --vae-resident --purge-before-transformer `
-  --memory-monitor rss --show-profile --show-metrics --save-metrics
+  --ddo-profile qwen-image21-1024x1024-20steps-vmm-fast `
+  --output-dir outputs/qwen-image21/vmm-fast
 ```
 
-This usage recipe explicitly enables [execution backing reclaim](runner-controls.md#execution-backing-reclaim).
-That opt-in does not change the recorded conditions or results of historical benchmark rows.
+### Experimental NVMe alternative
 
-The runner defaults to `--ddo-backend vmm --ddo-preset auto --variant base`.
-This selects `vmm_fast_runtime`, using the same default capybara prompt, BF16,
-CFG 1 and enabled KV cache. The runner stages the text encoder with official
-Diffusers leaf offload; the command explicitly selects a resident, untiled VAE.
-The capacities match the recorded Windows native workload: 4 GiB of active
-weights, 640 MiB of total host staging and separate 16 GiB source-storage and
-CUDA-registration ceilings. These are separate budgets, not a total VRAM limit.
-
-Platform-specific conditions and the protected `vmm/nvme_baseline` comparison
-remain documented in [measurement details](../benchmarks/qwen-image-21-details.md).
-The SDNQ runner is a separate route and does not use this native recipe.
-
-The public image VMM runners share one [DDO parameter vocabulary and defaults table](runner-controls.md#public-native-image-interface).
-Specify total staging capacity in GiB. Native execution investigations use
-the separate diagnostic entry.
-
-Turbo uses its saved sampling schedule, not an arbitrary base step count.
-Do not substitute Turbo in a base benchmark.
-
-### Single-frame 1024-square recipe
-
-For the tested Windows 8 GiB GPU, the recommended 1024-square decode setting is
-`--vae-no-temporal-cache`. It avoids video temporal-cache work for a single
-image. The measured decode was 1.33 s versus 3.08 s for the original path,
-with absolute full-run GPU peak 6.54 versus 8.00 GiB and an identical PNG.
-These are single observations for this workload, not a general fit guarantee.
-
-The [VAE feature comparison](../benchmarks/qwen-image-21-features.md) shows all
-six combinations, their decode and full-run peaks, timings and image checks.
-Use the reviewed local custom-block checkout for this development recipe:
+This protected route uses a fixed budget and needs no capacity profile.
 
 ```powershell
 python -B scripts/qwen_image_21/run_dynamic_modular_vmm.py `
-  --local-files-only --variant base --width 1024 --height 1024 --steps 20 --seed 42 `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --width 1024 `
+  --height 1024 `
+  --steps 20 `
+  --seed 42 `
+  --memory-monitor rss `
+  --metrics-level 2 `
+  --save-metrics `
+  --vae-leaf-offload `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-backend vmm `
+  --ddo-preset nvme_baseline `
+  --no-ddo-vmm-execution-backing-reclaim `
+  --no-text-encoder-native-vmm `
+  --no-vae-no-temporal-cache `
+  --ddo-vmm-resident-weight-budget-gb 1.5 `
+  --ddo-vmm-total-staging-gb 1.5 `
+  --ddo-vmm-source-cache-gb 0 `
+  --ddo-vmm-source-registered-gb 0 `
+  --output-dir outputs/qwen-image21/nvme-baseline
+```
+
+The native VAE recipe requires a standalone BF16 VAE, not the original
+FP32 `vae` directory. Its 0.375 GiB weight budget is independent of the
+transformer profile and staging. For the measured Leaf VAE alternative,
+replace `--vae-vmm-offload` and
+`--vae-vmm-resident-weight-budget-gb` with `--vae-leaf-offload`.
+The source dispatcher remains enabled by the public DDO default.
+Profile calibration adapts the transformer budget to the current hardware;
+it does not promise the same timing or budget as the published GPU.
+
+### Single-frame 1024-square recipe
+
+The VMM runner defaults to `--vae-no-temporal-cache` for untiled single-image
+decode. Use `--no-vae-no-temporal-cache` to select the original decoder.
+The [Qwen VAE feature study](../benchmarks/model-features.md#qwen-image)
+defines nine configurations and their comparison parents, with Windows and Linux
+measurements. The following single-frame example uses the
+native BF16 VAE route from that study. The published BF16 VAE is available at
+[`elismasilva/qwen-image-2.1-bf16-vae`](https://huggingface.co/elismasilva/qwen-image-2.1-bf16-vae).
+The runner downloads it to the standard Hugging Face cache before measured
+execution. An existing local VAE directory is also accepted.
+
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular_vmm.py `
+  --variant base --width 1024 --height 1024 --steps 20 --seed 42 `
   --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
   --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
   --text-encoder-native-vmm `
   --ddo-vmm-total-staging-gb 0.625 `
   --ddo-vmm-source-cache-gb 16 --ddo-vmm-source-registered-gb 16 `
-  --vae-resident --vae-no-temporal-cache --attention-backend default `
+  --vae-vmm-offload `
+  --vae-vmm-resident-weight-budget-gb 0.375 `
+  --vae-no-temporal-cache --image-joint-attention default `
   --no-ddo-vmm-execution-backing-reclaim `
-  --no-purge-before-run --purge-after-text-encoder --purge-before-transformer --no-purge-after-run `
   --memory-monitor rss --metrics-level 2 --show-metrics --save-metrics `
   --output-dir outputs/qwen_single_frame_1024
 ```
 
-The measurement used custom blocks at `cd1efe4` and a fresh `DDO_PROFILE_DIR`
-(no profile build), selecting the 0.625 GiB structural floor. An existing saved
-profile can change the residency budget; use a fresh profile directory when
-reproducing this comparison. Single-frame decode is enabled by default in this
-VMM runner; the flag is shown explicitly for readability. Use
-`--no-vae-no-temporal-cache` to select the original decoder. Tiling takes
-precedence; alias and band decode remain optional.
-
-For additional headroom, add `--vae-alias-residuals`; add `--vae-band-rows 256`
-as well for the measured 3.50 GiB peak while preserving the selected image.
-Band decode requires the local custom-block revision described in the comparison.
-Tiling is an alternative with a measured image difference.
+Build a compatible transformer profile before measuring inference; keep its
+resident budget fixed when comparing VAE options. For the original untiled
+control, replace `--vae-no-temporal-cache` with its negative form.
+Add `--vae-alias-residuals`, `--vae-direct-padding` and `--vae-band-rows 256`
+or `128` only according to the selected configuration. Band decode uses the
+reviewed local custom blocks and two final decoder blocks. Tiling is a
+separate original-decoder case and may change the image.
 
 ## Runtime and preset selection
 
@@ -124,8 +221,46 @@ If VAE activations still exceed memory, try `--vae-tiling`.
 
 ## Optional weight formats
 
-Use the separate [SDNQ INT4 guide](qwen-sdnq.md) for saved quantized weights.
-This is not a native VMM or general FP8 recipe.
+### SDNQ INT4
+
+Install the [SDNQ optional dependencies](setup.md). No FP8 extra or native
+allocator is required. The runner downloads the saved transformer from
+[`OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit`](https://huggingface.co/OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit)
+and loads BF16 auxiliary components from `Qwen/Qwen-Image-2.1`. Cached Hub files
+are reused. `--model-path` accepts a local packed transformer directory;
+`--auxiliary-model` selects a different auxiliary source.
+
+This Windows benchmark recipe uses Base, default SDPA and KV cache, Leaf
+encoder and VAE, with no purge or model optimizations:
+
+```powershell
+python -B scripts/qwen_image_21/run_dynamic_modular_sdnq.py `
+  --variant base --width 1024 --height 1024 --steps 20 --seed 42 `
+  --prompt 'A capybara wearing a wizard hat, reading by candlelight, oil painting' `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
+  --ddo-preset one_shot_fast `
+  --text-encoder-leaf-offload --vae-leaf-offload --image-joint-attention default `
+  --ddo-profile qwen-image21-1024x1024-20steps-sdnq-int4 `
+  --memory-monitor rss --metrics-level 2 --save-metrics `
+  --output-dir outputs/qwen-image21/sdnq-int4
+```
+
+Before generation, run this command with `--build-ddo-profile` and a separate
+output directory. It measures a two-step baseline without decode. If the
+report says `probe_pending`, replace that flag with `--validate-ddo-profile`
+for the two-step validation. Once the profile is final, run the command above.
+BF16 linear and VMM profiles cannot replace this packed-runtime profile.
+
+For the Leaf transformer control, replace the preset with
+`--ddo-preset diffusers_leaf_offload_compat` and omit `--ddo-profile`.
+Both routes preserve the packed SDNQ forward.
+
+The [resumable benchmark](../benchmarks/reproduction.md#qwen-saved-sdnq-int4-pair)
+calibrates automatically, verifies metrics and PNGs, and records pixel
+differences. The Windows RC5 pair produced pixel-identical PNGs; see the
+[INT4 results](../benchmarks/qwen-image-21.md#windows-saved-sdnq-int4) and
+[phase measurements](../benchmarks/qwen-image-21-phases.md#windows-sdnq-int4).
+Turbo, INT8 and Linux/WSL INT4 are outside this recipe.
 
 ## Metrics and profile
 
@@ -137,22 +272,11 @@ Select `--memory-monitor rss` to match the RSS benchmark tables.
 
 ### Linear capacity profile
 
-Create a profile for the BF16 base workload below. This performs 20 real denoise
-steps and stops before VAE loading, decode and image export. Run elevated on
-Windows for the requested purge.
-
-```powershell
-python -B scripts/qwen_image_21/run_dynamic_modular.py `
-  --ddo-backend linear --ddo-preset one_shot_fast `
-  --variant base --width 1024 --height 1024 --steps 20 --seed 42 `
-  --ddo-profile qwen21-base-bf16-1024 --build-ddo-profile `
-  --purge-before-transformer --memory-monitor rss --save-metrics `
-  --output-dir outputs/qwen_linear_profile
-```
-
-For normal generation, repeat the same recipe without `--build-ddo-profile` and
-use a separate output directory. Turbo needs its own profile name and retains
-its saved checkpoint schedule; `--steps` does not replace Turbo sigmas.
+Use the complete command for the selected preset above, adding
+`--build-ddo-profile` with the same 1024×1024 workload, prompt, routes,
+attention and purge policy. Remove that flag for inference. Each preset
+needs its own saved profile. Turbo needs a separate profile and preserves
+its checkpoint sampling schedule; it is not the Base benchmark recipe.
 See [profile storage and scope](runner-controls.md#persistent-capacity-profiles-for-linear-runners).
 
 See [Qwen parameters](qwen-image-21-parameters.md) and

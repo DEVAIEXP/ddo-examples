@@ -8,6 +8,12 @@ Options in other Qwen entries are identified separately below.
 
 ## Execution
 
+The SDNQ runner supports `--ddo-profile NAME`, `--build-ddo-profile` and
+`--validate-ddo-profile` for its separate packed-runtime capacity profile.
+Its two-step calibrations stop before decode. `--text-encoder-leaf-offload`
+selects explicit no-stream Leaf encoding; the INT4 benchmark uses this option
+and `--vae-leaf-offload` in both cases. See [optional weight formats](qwen-image-21.md#optional-weight-formats).
+
 The BF16 linear `run_dynamic_modular.py` also supports `--ddo-profile NAME`
 and `--build-ddo-profile`, independently of display-only `--show-profile`.
 See the [linear calibration recipe](qwen-image-21.md#linear-capacity-profile).
@@ -19,7 +25,7 @@ then generate with the same arguments. `auto` names the profile
 `qwen-image21-<W>x<H>-<digest>` from the resolution and variant. Without an
 explicit `--ddo-vmm-resident-weight-budget-gb`, `vmm/auto` uses the saved
 profile or DDO's structural floor (previously the generic 4 GiB default). See
-[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/native-vmm.md#vmm-residency-profile).
+[VMM residency profile](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/user/capacity-profiles.md#vmm-residency-profile).
 The capacity controls are not exposed by the public minimal, SDNQ or Diffusers
 leaf entries.
 
@@ -27,7 +33,7 @@ leaf entries.
 | --- | --- |
 | `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes); `--no-text-encoder-native-vmm` selects Diffusers leaf offload. Loads the Qwen3-VL encoder through DDO's weight-aware loader with native component ownership. A measured 512² Windows pair (standby purge before run, benchmark transport) encoded in 3.2 s versus 13.7 s with leaf, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
-| `--attention-backend default\|cudnn` | Default `default` (PyTorch's SDPA order). `cudnn` prefers flash > cuDNN > memory-efficient > math during the denoise only; ineligible inputs fall back. Kernels change, model math does not, but outputs can differ numerically: compare images before adopting it. Part of the `auto` profile name. Not yet measured for Qwen. |
+| `--attention-backend default\|cudnn` | Main VMM runner. The default keeps PyTorch's SDPA order. Opt-in `cudnn` sets the denoise priority to PyTorch flash > cuDNN > memory-efficient > math, with fallback for ineligible calls. It can be used on its own and may change the output numerically. The setting contributes to the `auto` profile name. |
 
 | Control | Purpose |
 | --- | --- |
@@ -56,11 +62,11 @@ route preserves its preset component policy.
 | --- | --- |
 | `--vae-leaf-offload` | Explicit Diffusers leaf route without streaming; overrides the preset VAE route. |
 | `--vae-resident` | Explicit resident VAE decode. Cannot be combined with leaf or native VAE selection. |
-| `--vae-vmm-offload` | Experimental native VAE component ownership. Requires `--ddo-backend vmm --ddo-preset auto`, a separate VAE path and a finite positive weight budget. Cannot be combined with leaf/resident selection. |
-| `--vae-model-path DIRECTORY` | Existing standalone BF16 VAE directory, loaded locally; required only with native VAE selection. |
+| `--vae-vmm-offload` | Experimental native VAE component ownership. Requires `--ddo-backend vmm --ddo-preset auto` and a finite positive weight budget. Uses the published BF16 VAE by default. Cannot be combined with leaf/resident selection. |
+| `--vae-model-path SOURCE` | Standalone BF16 VAE directory or Hub ID; defaults to `elismasilva/qwen-image-2.1-bf16-vae` when native VAE is selected. Hub models use the standard Hugging Face cache. `--local-files-only` requires a cached snapshot. |
 | `--vae-vmm-resident-weight-budget-gb GIB` | Independent VAE weight ceiling; required only with native VAE selection. Does not change the transformer budget. |
 | `--vae-tiling` | Spatial tiling to reduce VAE activation demand; may change decode latency. |
-| `--vae-no-temporal-cache` / `--no-vae-no-temporal-cache` | The VMM runner enables the custom single-frame, untiled decode by default; the negative form selects the original decoder. Linear/SDNQ entries keep their own opt-in defaults. Tiled decode takes precedence. See the [measured combinations](../benchmarks/qwen-image-21-features.md). |
+| `--vae-no-temporal-cache` / `--no-vae-no-temporal-cache` | The VMM runner enables the custom single-frame, untiled decode by default; the negative form selects the original decoder. Linear/SDNQ entries keep their own opt-in defaults. Tiled decode takes precedence. See the [measured combinations](../benchmarks/model-features.md#qwen-image). |
 | `--vae-alias-residuals` | Reuse residual inputs in that custom single-frame path. Requires `--vae-no-temporal-cache`; not active under tiling. |
 | `--vae-direct-padding` | Use custom convolution padding in that single-frame path. Requires `--vae-no-temporal-cache`; not active under tiling. |
 | `--vae-band-rows ROWS` | Opt-in band decode in that single-frame path: the last `--vae-band-blocks` decoder up blocks (default 2, the highest-resolution ones) and the output head run in horizontal bands of `ROWS` output rows, each with a halo covering their receptive field, so the activation peak drops without seams. The middle block (global attention) and earlier blocks run whole. Equal to the whole decode on CPU; GPU output needs a parity check. Requires `--vae-no-temporal-cache`, not with `--vae-tiling`, and custom blocks providing `enable_band_decode` (select a revision or local checkout with `--custom-blocks`). |
@@ -82,7 +88,7 @@ Advanced native experiments use `run_dynamic_modular_vmm_diagnostics.py`.
 | --- | --- |
 | `run_dynamic_minimal.py` | Native VMM transformer (`--ddo-backend vmm` / `--ddo-preset auto`), native capacities and opt-in execution backing reclaim; base/Turbo, custom blocks, offline loading and opt-in VAE tiling. Defaults: 1024², base 25 steps, seed 42, full memory monitoring. No separate profile/metrics display switches. |
 | `run_dynamic_modular.py` | Linear/compatibility route; same source/sampling vocabulary as VMM. Defaults: 1024², base 25 steps, seed 42, RSS/metrics level 2, display/save enabled, profile disabled. Supports the component controls described below. |
-| `run_dynamic_modular_sdnq.py` | Packed base INT4 or its leaf control; backend `linear`, preset `auto`, 512², 20 steps, seed 42. Same reporting defaults as linear. `--model-path` overrides the packed transformer; `--model-revision` optionally pins it. `--auxiliary-model` defaults to `Qwen/Qwen-Image-2.1`. See the [SDNQ guide](qwen-sdnq.md). |
+| `run_dynamic_modular_sdnq.py` | Packed base INT4 or its leaf control; backend `linear`, preset `auto`, 512², 20 steps, seed 42. Same reporting defaults as linear. `--model-path` overrides the packed transformer; `--model-revision` optionally pins it. `--auxiliary-model` defaults to `Qwen/Qwen-Image-2.1`. See [optional weight formats](qwen-image-21.md#optional-weight-formats). |
 | `run_diffusers_leaf.py` | Conventional full-pipeline control, with no DDO runtime or custom blocks. No backend/preset selectors. Pipeline `--model-path`, prompt, dimensions, steps, seed, offline loading, VAE tiling and reporting only; defaults 512²/20 steps/seed 42 and RSS/level 2. Exposes purge before run/transformer and after run, with no separate encoder boundary. |
 
 `--text-encoder-preset` and `--vae-linear-offload` belong to entries that expose

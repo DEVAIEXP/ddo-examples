@@ -9,215 +9,319 @@ comparing runtime names, phase timings, tracked totals or memory peaks.
 
 ## Workload and measurement scope
 
-Base BF16, 512×512, 20 steps, seed 42, capybara prompt, CFG 1 and KV cache. Shared official leaf text encoder; resident untiled VAE on Windows/Linux, untiled non-streamed leaf VAE on WSL.
-
-Checkpoint: `Qwen/Qwen-Image-2.1`, snapshot
-`d26bb61231c349cf6b7896fa83353113880e1ba3`. Official Diffusers 0.41.0
-in the primary platform comparisons. The prompt is
-"A capybara wearing a wizard hat, reading by candlelight, oil painting".
-CFG 1, KV cache enabled. No compute compilation or local VAE math changes
-in the primary 512-square cases. The separate 1024-square cases retain their
-explicit local VAE/cleanup settings.
-
-Text encoder load, attachment, `encode` and cleanup are separate monitored
-phases. The text-encode number excludes the neighboring load/cleanup rows.
-Denoise includes the runner's completion/CPU latent readback boundary.
-Transformer attachment is separate from denoise. VAE loading is separate from
-the `decode` phase.
-
-All primary controls are staged modular runners. The official leaf control is
-not the older monolithic pipeline whose encoder/denoise/decode could not be
-separated. Baseline-relative console VRAM must not replace absolute driver peaks.
-
-All displayed phase rows are existing observations, not new runs or inferred
-phase estimates. Memory comes from each recorded phase's
-`peak_vram_absolute_gb` and `peak_ram_gb` with `ram_metric=rss`.
-Times use `elapsed_sec`; global peaks and tracked totals come from the same
-report as that row. Values are rounded to two decimals for display only.
-Missing fields remain unavailable. Phase tables show selected boundaries, not
-an additive decomposition; do not add aggregates to their child events or sum
-memory peaks. Host callbacks do not establish completed warm GPU timing.
-See [metric definitions](glossary.md).
-
-## Platform conditions
-
-Windows comparisons recorded successful standby purge before the transformer;
-phase-local purge can also be included in tracked totals. Linux and WSL do not
-execute the Windows purge. WSL auxiliary leaf hooks are non-streamed and native
-registration is bounded; those routes are not equivalent to Windows/Linux
-streamed controls. Do not treat different platform observations as causal A/Bs.
-
-Linux protected NVMe observations dated 2026-10-13 use driver 595.99.02 and a
-fresh post-reboot/cache session, unlike the earlier route trios. This prevents
-attributing their timing difference solely to the allocator. Primary cases are
-single observations, not repeated statistical estimates or low-RAM certification.
-The compared completed outputs matched within the recorded route sets; this is
-not a universal quality or cross-platform byte-identity claim.
-
-## BF16 scenarios
-
-<a id="windows-leaf"></a>
-
-### Windows / Official leaf
-
-The `diffusers_leaf_offload_compat` control executes official Diffusers leaf hooks, not DDO dynamic denoising.
-
-
-<a id="windows-linear"></a>
-
-### Windows / `one_shot_fast`
-
-`--ddo-backend linear --ddo-preset one_shot_fast` executes `linear_runtime`.
-
-
-<a id="windows-low-ram"></a>
-
-### Windows / `low_ram_safe`
-
-`--ddo-backend linear --ddo-preset low_ram_safe` executes `linear_runtime`.
-
-
-<a id="windows-native"></a>
-
-### Windows / `vmm_fast` (reused observation)
-
-`--ddo-backend vmm --ddo-preset auto` resolves to `vmm_fast`, executing `vmm_fast_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; `640` MiB total staging. Retained source / registration ceilings: `16` / `16` GiB.
-Native allocation is process-wide: encoder/VAE driver baselines can differ
-even when their component offload policies are unchanged.
-This is the reused official-package native observation, not a repeat alongside
-the Windows leaf/linear runs. Matching workload fields and output do not prove
-identical source-checkout or driver/cache state.
-
-<a id="windows-nvme"></a>
-
-### Windows / `nvme_baseline`
-
-`--ddo-backend vmm --ddo-preset nvme_baseline` executes protected `vmm_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; two `640` MiB staging slots. Retained source / registration ceilings: `0` / `0` GiB.
-Normal PyTorch allocation plus native weight arena, not the process-wide native
-Torch allocator. Zero persistent source cache is not zero OS file-cache usage.
-
-<a id="linux-leaf"></a>
-
-### Linux / Official leaf
-
-The `diffusers_leaf_offload_compat` control executes official Diffusers leaf hooks, not DDO dynamic denoising.
-
-
-<a id="linux-linear"></a>
-
-### Linux / `one_shot_fast`
-
-`--ddo-backend linear --ddo-preset one_shot_fast` executes `linear_runtime`.
-
-
-<a id="linux-native"></a>
-
-### Linux / `vmm_fast`
-
-`--ddo-backend vmm --ddo-preset auto` resolves to `vmm_fast`, executing `vmm_fast_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; `640` MiB total staging. Retained source / registration ceilings: `16` / `16` GiB.
-Native allocation is process-wide: encoder/VAE driver baselines can differ
-even when their component offload policies are unchanged.
-
-<a id="linux-nvme"></a>
-
-### Linux / `nvme_baseline`
-
-`--ddo-backend vmm --ddo-preset nvme_baseline` executes protected `vmm_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; two `448` MiB staging slots. Retained source / registration ceilings: `0` / `0` GiB.
-Normal PyTorch allocation plus native weight arena, not the process-wide native
-Torch allocator. Zero persistent source cache is not zero OS file-cache usage.
-
-<a id="wsl-leaf"></a>
-
-### WSL / Official leaf (no stream)
-
-The `diffusers_leaf_offload_compat` control executes official Diffusers leaf hooks, not DDO dynamic denoising.
-
-
-<a id="wsl-linear"></a>
-
-### WSL / `wsl_compat` (3 GiB override)
-
-`--ddo-backend linear --ddo-preset wsl_compat` executes `linear_runtime`.
-
-The resident-module budget is explicitly 3 GiB, CPU pinning is disabled and
-automatic budgeting is off. This validates the override, not preset-default
-capacity; a configured ceiling is not measured residency.
-
-<a id="wsl-native"></a>
-
-### WSL / `vmm_fast` (bounded)
-
-`--ddo-backend vmm --ddo-preset auto` resolves to `vmm_fast`, executing `vmm_fast_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; `384` MiB total staging. Retained source / registration ceilings: `16` / `0.5` GiB.
-Native allocation is process-wide: encoder/VAE driver baselines can differ
-even when their component offload policies are unchanged.
-
-<a id="wsl-nvme"></a>
-
-### WSL / `nvme_baseline`
-
-`--ddo-backend vmm --ddo-preset nvme_baseline` executes protected `vmm_runtime`.
-
-Fixed transformer capacity: `4` GiB active weights; two `448` MiB staging slots. Retained source / registration ceilings: `0` / `0` GiB.
-Normal PyTorch allocation plus native weight arena, not the process-wide native
-Torch allocator. Zero persistent source cache is not zero OS file-cache usage.
-
-## Windows 1024×1024 — separate VAE settings
-
-Base BF16, 20 steps, seed 42; untiled leaf VAE. Native uses explicit cache trimming; this is not an allocator-only A/B.
-
-<a id="windows-1024-linear"></a>
-
-### Windows / `one_shot_fast` / leaf VAE
-
-Same base model, prompt, 20 steps and seed 42 as the 512-square workload,
-but resolution is 1024×1024. Leaf untiled VAE uses explicitly accepted local
-options; do not attribute their effects to transformer offload alone.
-
-<a id="windows-1024-native"></a>
-
-### Windows / `vmm_fast` / leaf VAE + trim
-
-Same base model, prompt, 20 steps and seed 42 as the 512-square workload,
-but resolution is 1024×1024. Leaf untiled VAE uses explicitly accepted local
-options; do not attribute their effects to transformer offload alone.
-This case explicitly trims native idle cache before VAE. Native trim and
-cuBLAS workspace clearing are not implied by selecting a VAE preset.
-
-## Windows SDNQ INT4
-
-Base 512×512, 20 steps, seed 42; BF16 auxiliaries, resident stock VAE. Output parity is within the INT4 pair, not a BF16 quality-equivalence claim.
-
-<a id="int4-ddo"></a>
-
-### Windows / SDNQ / `one_shot_fast`
-
-Saved checkpoint `OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit`, snapshot
-`59d4c3610379d91fb023c4d0b6527c76755491c4`, SDNQ 0.2.7 and official
-Diffusers 0.41.0. BF16 auxiliaries and stock resident VAE remain unchanged.
-`one_shot_fast` executes packed `sdnq_runtime`, preserving SDNQ math.
-Normal PyTorch allocation, not native VMM. Outputs match within the INT4
-pair; BF16-versus-INT4 quality equivalence was not established.
-
-<a id="int4-leaf"></a>
-
-### Windows / SDNQ / official leaf
-
-Saved checkpoint `OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit`, snapshot
-`59d4c3610379d91fb023c4d0b6527c76755491c4`, SDNQ 0.2.7 and official
-Diffusers 0.41.0. BF16 auxiliaries and stock resident VAE remain unchanged.
-`diffusers_leaf_offload_compat` executes official streamed leaf with SDNQ math.
-Normal PyTorch allocation, not native VMM. Outputs match within the INT4
-pair; BF16-versus-INT4 quality equivalence was not established.
+Qwen Image 2.1 Base BF16, 1024×1024, 20 steps, seed 42, guidance 1 and
+KV cache enabled. Checkpoint snapshot `d26bb61231c349cf6b7896fa83353113880e1ba3`.
+The prompt is "A capybara wearing a wizard hat, reading by candlelight, oil painting".
+See the [metric definitions](glossary.md) for sampled absolute GPU peaks,
+process RSS and phase boundaries.
+
+## Windows 1024×1024 — BF16 runtime control
+
+### Windows 1024 Leaf control
+
+Use the dedicated official Diffusers Leaf runner via
+`benchmarks/run_benchmark.py --platform windows --recipe qwen-image21 --family runtime --case official-leaf`.
+The recipe uses the capybara prompt, guidance 1, the default KV cache and
+SDPA, streamed Leaf hooks for the encoder and transformer, non-streamed Leaf
+for the untiled VAE, and disabled runner purge controls. The selected standalone
+run followed a manual Windows standby cache purge; this initial condition differs
+from the other runtime observations. See [benchmark reproduction](reproduction.md)
+for execution setup.
+
+On NVIDIA driver 617.42, the tracked total was 107.66 s, with full-run peaks
+of 8.00 GiB absolute GPU usage and 35.50 GiB process RSS. The sampling loop
+took 87.62 s (4.38 s/step), peaking at 3.29 GiB GPU and 32.94 GiB RSS.
+Decode took 5.59 s, peaking at 8.00 GiB GPU and 35.47 GiB RSS.
+All values come from this one run, whose PNG matched the other completed
+Leaf observations byte for byte.
+
+The conventional pipeline is preserved. Denoise is measured around its public
+sampling-loop boundary, including scheduler work and callbacks. Decode starts
+after the loop and includes latent preparation, VAE execution and image
+postprocessing; pipeline cleanup and PNG saving remain separate. The existing
+sampler supplies independent interval peaks without added CUDA synchronization.
+Text encoding is not independently measured and remains N/A. The generation
+aggregate contains these intervals and must not be added to them.
+
+<a id="windows-1024-one-shot-fast"></a>
+
+### Windows 1024 / `one_shot_fast`
+
+Windows RC5, default SDPA, no standby purge. The transformer uses
+`linear_runtime` with a calibrated 5.02 GiB resident budget. Encoder and
+untiled VAE use Leaf. Select `--case one-shot-fast --no-purge` in the benchmark.
+
+<a id="windows-1024-low-ram-safe"></a>
+
+### Windows 1024 / `low_ram_safe`
+
+Same workload and component routes, with a calibrated 4.75 GiB resident
+budget. Select `--case low-ram-safe --no-purge`. Both linear PNGs match
+the official Leaf PNG by SHA-256.
+
+<a id="windows-1024-nvme-baseline"></a>
+
+### Windows 1024 / `nvme_baseline`
+
+The transformer uses `vmm_runtime` with a fixed 1.50 GiB resident weight
+budget and a 1.50 GiB staging budget. Profile calibration is N/A. The
+encoder and untiled VAE use Leaf. This Windows RC5 component control used
+driver 617.42, default SDPA, and no standby purge. The PNG matched the
+official Leaf control by SHA-256. Select
+`--family components --case nvme-baseline --nvme-resident-gib 1.5 --no-purge`.
+
+<a id="windows-1024-vmm-fast-leaf"></a>
+
+### Windows 1024 / `vmm_fast` with Leaf VAE
+
+The transformer uses `vmm/auto` (`vmm_fast_runtime`) with an applied 0.625 GiB
+resident weight profile, 0.625 GiB staging, and 16 GiB each for source cache and
+registration. The encoder uses native VMM, the source dispatcher was active,
+and the untiled VAE uses Leaf. Default SDPA, standby purge disabled, and
+execution-backing reclaim disabled. The PNG matched the official Leaf control
+by SHA-256. Both three-step calibration runs are outside the tracked total.
+This is the component control for evaluating the native VAE route.
+
+Measured on the RTX 3060 Ti with NVIDIA driver 617.42, DDO and allocator
+0.1.0rc5, Torch 2.12.1+cu132, Diffusers 0.41.0, and Transformers 5.15.1.
+Select `--family components --case vmm-fast --no-purge` in the benchmark.
+
+<a id="windows-1024-vmm-fast-native-vae"></a>
+
+### Windows 1024 / `vmm_fast` with native VAE
+
+This run calibrated a 0.625 GiB transformer profile and used the same native
+VMM encoder route as the [Leaf VAE control](#windows-1024-vmm-fast-leaf).
+The two three-step calibrations are outside the tracked total. The untiled VAE used native
+VMM component ownership, an independent 0.375 GiB resident weight budget,
+and a local BF16 copy converted from the checkpoint's FP32 VAE. The runner
+uses `--vae-vmm-offload` with an explicit `--vae-model-path` and
+`--vae-vmm-resident-weight-budget-gb 0.375`. Select
+`--family runtime --case vmm-fast --vae-model-path elismasilva/qwen-image-2.1-bf16-vae`
+in the benchmark controller. Single-frame VAE decode was disabled.
+
+The sum of recorded VAE phases from load through cleanup was 3.02 s with
+Leaf and 1.95 s with native VMM, including native attachment.
+
+Both runs used default SDPA and disabled standby purge. The PNGs were
+byte-identical. The load difference includes the prepared BF16 source.
+Denoise ran before VAE loading.
+
+<a id="windows-1024-joint-attention"></a>
+
+### Windows 1024 / transformer joint attention on VMM Fast
+
+The cuDNN case uses the [native VAE runtime control](#windows-1024-vmm-fast-native-vae)
+and changes only transformer joint attention. Select
+`--family attention --attention-runtime vmm-fast --case cudnn-sdpa`. Supply
+the completed default SDPA manifest with `--reference-manifest` and the same
+BF16 VAE with `--vae-model-path`. The controller reuses the verified final
+transformer profile from the control. The operator check recorded
+`aten::_scaled_dot_product_cudnn_attention` in a separate diagnostic run.
+The table uses one measurement per case with tracing disabled. Both use
+NVIDIA driver 617.42, no standby purge, and the same masked joint-attention
+workload. Across the RGB channels, the PNGs differed by a mean absolute
+1.20 levels on the 8-bit scale. Visual equivalence remains unverified.
+
+FlashAttention 2 is excluded from this comparison because the available
+backend cannot preserve the text padding mask used by Qwen joint attention.
+
+## Linux 1024×1024 — BF16 runtime control
+
+<a id="linux-1024-leaf-control"></a>
+
+### Linux 1024 Leaf control
+
+Select `--platform linux --recipe qwen-image21 --family runtime
+--case official-leaf --expandable-segments` in the benchmark controller.
+The dedicated official Leaf runner uses the same checkpoint, capybara
+prompt, BF16, 1024×1024, 20 steps, seed 42, guidance 1 and default KV cache.
+Transformer joint attention uses default SDPA. Encoder and transformer
+use streamed Leaf hooks, and the untiled VAE uses non-streamed Leaf.
+
+The manifest records `PYTORCH_ALLOC_CONF=expandable_segments:True` explicitly.
+The run completed all 20 steps and produced a verified 1024×1024 PNG,
+byte-identical to the other Linux runtime outputs. Full-run latency was
+70.85 s, with 7.46 GiB absolute GPU peak and 33.66 GiB process RSS peak.
+Denoise took 61.20 s (3.06 s/step), peaking at 2.84 GiB GPU and 33.11 GiB RSS.
+Decode took 1.61 s, peaking at 7.30 GiB GPU and 33.66 GiB RSS.
+
+The dedicated official pipeline retains its sampling-loop boundary, scheduler
+and callbacks. Decode includes latent preparation and image postprocessing;
+pipeline cleanup and PNG saving are separate. Text encoding remains inside
+the generation aggregate and is not independently measured. No phase peak
+is substituted from the aggregate.
+
+The environment uses installed DDO and allocator 0.1.0rc5, Torch
+2.12.1+cu132, Diffusers 0.41.0 and NVIDIA driver 615.71.09. Standby purge,
+single-frame decode and VAE tiling are disabled. No DDO profile is required.
+
+<a id="linux-1024-one-shot-fast"></a>
+
+### Linux 1024 / `one_shot_fast`
+
+Select `--platform linux --recipe qwen-image21 --family runtime
+--case one-shot-fast --expandable-segments` with the same checkpoint,
+prompt and workload as the Linux Leaf control. The transformer uses
+`linear_runtime` with an applied 5.2197 GiB resident-module profile.
+The 20-step calibration is outside the tracked inference total.
+Encoder and untiled VAE use Leaf. Default SDPA, standard KV cache and
+PyTorch expandable segments are active, with standby purge disabled.
+The output PNG matched the Leaf control by SHA-256.
+
+The tracked total was 3.34 s shorter than the selected Leaf control, with
+peak process RSS 12.15 GiB lower. These runs occurred in separate sessions;
+the difference is not an isolated runtime effect.
+
+<a id="linux-1024-low-ram-safe"></a>
+
+### Linux 1024 / `low_ram_safe`
+
+Select `--platform linux --recipe qwen-image21 --family runtime
+--case low-ram-safe --expandable-segments`. The recipe, checkpoint,
+default SDPA, Leaf encoder/VAE and allocator configuration match the
+Linux One Shot Fast case. The transformer uses `linear_runtime` with an
+applied 5.2706 GiB resident-module profile. Its 20-step calibration is
+outside the tracked inference total. The PNG matched the Leaf and One Shot
+Fast outputs by SHA-256.
+
+The run took 71.60 s with 22.41 GiB peak RSS, exceeding One Shot Fast
+on both metrics. Its VAE phase peaked at 2.95 GiB process RSS, while
+the run-wide RSS peak occurred during text encoding.
+
+<a id="linux-1024-vmm-fast"></a>
+
+### Linux 1024 / `vmm_fast`
+
+Select `--platform linux --recipe qwen-image21 --family runtime
+--case vmm-fast` with the same BF16 VAE source used by the Windows native
+case, passed through `--vae-model-path`. The transformer uses
+`vmm/auto` (`vmm_fast_runtime`) and an applied final 0.625 GiB resident
+weight profile with matching input shapes. Both three-step calibrations
+are outside the tracked total. Staging is 0.625 GiB, and source cache and
+registration ceilings are 16 GiB each.
+
+Encoder and untiled VAE use native VMM. The VAE has its own 0.375 GiB
+resident budget. The native source dispatcher was active. Execution-backing
+reclaim, standby purge and single-frame VAE decode are disabled. The
+process uses the native DDO allocator. The PNG matched all three Linux
+Leaf and linear outputs by SHA-256.
+
+<a id="linux-1024-vmm-fast-leaf"></a>
+
+### Linux 1024 / `vmm_fast` / Leaf VAE
+
+Select `--platform linux --recipe qwen-image21 --family components
+--case vmm-fast` with `--component-reference-manifest` pointing to the completed
+native VMM Fast runtime manifest. The controller verifies and reuses the final
+0.625 GiB transformer profile. Encoder, transformer, default SDPA, source
+budgets, checkpoint, prompt, seed and image dimensions match that reference.
+Only the VAE route changes to `--vae-leaf-offload`; it loads from the main
+checkpoint instead of the standalone BF16 native VAE source.
+
+The untiled Leaf VAE uses the native DDO allocator installed for this VMM Fast
+process. No single-frame optimization, reclaim or standby purge is enabled.
+NVIDIA driver 615.71.09 and the RC5 environment match the native reference.
+The run completed with an applied final profile and matching input shapes.
+The verified PNG matched the native reference by SHA-256 and RGB pixels.
+The 57.58 s tracked total includes a 47.19 s denoise/readback and a 1.74 s
+VAE decode. This is one measurement per route; the total difference includes
+variation in transformer time as well as the VAE route change.
+
+<a id="linux-1024-joint-attention"></a>
+
+### Linux 1024 / transformer joint attention on VMM Fast
+
+Select `--platform linux --recipe qwen-image21 --family attention
+--case cudnn-sdpa --attention-runtime vmm-fast`. Supply the completed
+VMM Fast SDPA manifest with `--reference-manifest` and the same BF16 VAE
+with `--vae-model-path`. The controller verifies the reference and reuses
+its final 0.625 GiB profile, native component routes and transport budgets.
+Only masked transformer joint attention changes.
+
+The separate diagnostic recorded `aten::_scaled_dot_product_cudnn_attention`.
+The timed measurement had tracing disabled. Both used NVIDIA driver
+615.71.09 and no standby purge. The PNG was valid and differed from the
+control by mean absolute values of 1.74, 1.28 and 0.69 levels across
+the RGB channels on the 8-bit scale. Visual quality remains unassessed.
+FlashAttention 2 is excluded because the available backend cannot preserve
+the text padding mask used by this joint-attention workload.
+
+## WSL 1024×1024 — BF16 runtime control
+
+<a id="wsl-1024-leaf-control"></a>
+
+### WSL 1024 Leaf control
+
+The benchmark controller starts `run_diffusers_leaf.py` with
+`--no-stream-offload --vae-leaf-offload --image-joint-attention default`.
+The run uses BF16, 20 steps, seed 42, guidance 1, the standard KV cache,
+and no VAE tiling or standby purge. The environment uses Diffusers `0.41.0`,
+Torch `2.12.1+cu132`, installed DDO and allocator RC5, and NVIDIA driver `617.42`.
+The runner applies official Diffusers hooks and uses no calibration profile.
+The selected direct runner execution completed all 20 steps and produced a
+verified 1024×1024 PNG, byte-identical to the other WSL runtime outputs.
+It uses `PYTORCH_ALLOC_CONF=expandable_segments:False`; prefix a direct Bash
+runner command with that assignment. The benchmark controller applies this
+setting only to the WSL official Leaf runtime recipe. Shared defaults remain
+unchanged. Before decode, the runner performs a separately measured GC, CUDA
+synchronization and unused-cache cleanup, preserving live tensors.
+
+The full run took 420.09 s, peaking at 8.00 GiB GPU and 37.82 GiB RSS.
+Denoise took 313.73 s (15.69 s/step), with 3.42 GiB GPU and 37.82 GiB RSS.
+Decode took 5.10 s, with 8.00 GiB GPU and 33.04 GiB RSS. The 0.13 s cleanup
+interval is excluded from both phase latencies and included in the full run.
+Text encoding remains part of the generation aggregate, not an independently
+measured encoder phase. No calibration profile is required.
+
+<a id="wsl-1024-wsl-compat"></a>
+
+### WSL 1024 / `wsl_compat`
+
+Select `--platform wsl --recipe qwen-image21 --family runtime --case wsl-compat`
+with the same reviewed custom blocks as VMM Fast. The transformer uses
+`linear/wsl_compat` (`linear_runtime`) with CPU pinning disabled and an applied
+4.74 GiB resident-module budget. The controller clears the preset's fixed
+resident-module override so the saved profile determines the budget. The
+20-step calibration is outside the tracked total.
+
+The encoder and untiled VAE use non-streamed Leaf. Default SDPA is active,
+with no standby purge or single-frame VAE decode. The run used the same
+GPU, driver, Python, and package versions as VMM Fast. Its output PNG
+matched both other WSL runs by SHA-256.
+
+<a id="wsl-1024-vmm-fast"></a>
+
+### WSL 1024 / `vmm_fast`
+
+Select `--platform wsl --recipe qwen-image21 --family runtime --case vmm-fast`.
+Use a clean checkout of the custom blocks at
+`cd1efe4ad857b3e15fe5cb675842b4283750b805` and pass it with `--custom-blocks`.
+The transformer uses `vmm/auto` (`vmm_fast_runtime`) with the source dispatcher
+active and an applied 4.34 GiB resident weight budget. Staging, source cache
+and registration budgets were 0.625 GiB, 16 GiB and 0.5 GiB, respectively.
+Both three-step profile calibrations took place outside the tracked total.
+
+The encoder and untiled VAE use non-streamed Leaf. The run uses default
+SDPA with execution-backing reclaim, standby purge and single-frame VAE
+decode disabled. It used the same GPU, driver, DDO, allocator, Torch and
+Diffusers versions as the WSL Leaf control, with Transformers 5.15.1 and
+Python 3.12.12. The verified output PNG matched the Leaf control by SHA-256.
+
+<a id="wsl-1024-joint-attention"></a>
+
+### WSL 1024 / transformer joint attention on VMM Fast
+
+Select `--platform wsl --recipe qwen-image21 --family attention --case cudnn-sdpa
+--attention-runtime vmm-fast` and supply the completed VMM Fast default SDPA
+manifest with `--reference-manifest`. The controller reuses the verified final
+profile from the control. Only transformer joint attention changes.
+
+The diagnostic recorded `aten::_scaled_dot_product_cudnn_attention`.
+The timed run used the same profile and kept tracing disabled. Its PNG matched
+the diagnostic PNG by SHA-256 and differed from the default SDPA control.
+Mean absolute differences in 8-bit RGB values were 1.74, 1.28, and 0.69
+per channel. Maximum differences were 182, 171, and 118, respectively.
 
 ## Reproduce this workload
 
@@ -228,3 +332,100 @@ or a different custom-block revision do not guarantee equivalent conditions.
 Review trusted custom-block code and keep platform environments separate.
 Package/build validation and raw engineering investigations are developer concerns,
 not additional timing rows or prerequisites for interpreting these tables.
+
+<a id="windows-sdnq-int4"></a>
+
+## Windows SDNQ INT4
+
+The RC5 pair uses saved `OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit` snapshot
+`59d4c3610379d91fb023c4d0b6527c76755491c4` and BF16 Base auxiliaries from
+`Qwen/Qwen-Image-2.1`, snapshot `d26bb61231c349cf6b7896fa83353113880e1ba3`.
+Reviewed Qwen custom blocks are `cd1efe4ad857b3e15fe5cb675842b4283750b805`.
+The saved recipe specifies unsigned four-bit weights, dynamic quantization
+and Hadamard transforms; the runner preserves SDNQ's backend forward.
+
+Workload: 1024×1024, 20 steps, seed 42, guidance 1, default KV cache,
+default SDPA, and prompt “A capybara wearing a wizard hat, reading by
+candlelight, oil painting”. Both use explicit no-stream Leaf encoder and
+VAE routes. Transformer Leaf uses official streamed hooks; DDO uses
+`linear/one_shot_fast` resolved to `sdnq_runtime`. No purge, compilation,
+single-frame VAE or other model optimization is enabled.
+
+Environment: Windows, RTX 3060 Ti 8 GiB, NVIDIA driver 617.42, installed
+DDO/allocator 0.1.0rc5, Torch 2.12.1+cu132, Diffusers 0.41.0 and SDNQ 0.2.7.
+The DDO-specific profile was built with a two-step baseline and a two-step
+probe without decode, then applied at 6 GiB. Calibration is excluded from
+inference totals. Source dispatcher is N/A for these normal-allocator routes.
+
+Both measurements completed and their PNG RGB pixels were identical.
+Results are single sequential observations, with Leaf before calibration
+and DDO afterward; prompt and startup/cache effects affect total latency.
+No comparison with BF16 output quality is established. Decode and save
+sums VAE load, decode, collection/cleanup and PNG saving.
+See the [phase table](qwen-image-21-phases.md#windows-sdnq-int4).
+
+## Decode and save column
+
+
+The latency columns use the same order as video: **Denoise**, **Average
+(s/step)**, **Decode and save**, then **Tracked total**. Average divides denoise
+wall latency by the recipe steps (8 for LTX Image, 20 for Qwen Image); it
+retains any warmup/readback included in denoise. For images, Decode and save sums the recorded
+VAE load/attachment, decode, collection/cleanup and PNG-save phases. It excludes
+transformer cleanup and any pre-VAE purge. Some runners record a combined VAE
+phase; its full recorded scope is retained. This is not isolated VAE compute.
+N/A means that the required phases were not separately recorded, including
+the monolithic Qwen Leaf generation; no estimate is subtracted from total.
+See the phase measurements for the component timings. Denoise in Qwen includes
+CPU latent readback. These phase intervals are already included in tracked total.
+
+## Linux VAE feature study
+
+The [nine Qwen VAE configurations](model-features.md#linux-qwen-vae-observations)
+use Base snapshot `d26bb61231c349cf6b7896fa83353113880e1ba3`, custom blocks
+`cd1efe4ad857b3e15fe5cb675842b4283750b805`, BF16, 1024×1024, 20 steps,
+seed 42, guidance 1, KV cache and the same capybara prompt. Driver 615.71.09,
+installed RC5, Torch 2.12.1+cu132 and Diffusers 0.41.0 match the Linux host.
+Default SDPA, native VMM encoder and VAE, and the source dispatcher are fixed.
+The VAE reads the same prepared BF16 source as the native runtime control;
+the feature run does not convert it. Encoder residency is 4 GiB, VAE 0.375 GiB,
+total staging 0.625 GiB and source cache/registration ceilings 16 GiB each.
+No purge, reclaim, compilation or quantization is enabled.
+
+Two three-step calibrations finalized the control transformer profile. All
+nine measurements applied that intact profile with matching shapes and exactly
+671,088,640 configured resident-weight bytes. Decoder features are applied
+after denoising. The original tiling case disables single-frame, alias, direct
+padding and band decode. Each alternative compares with its explicit parent
+and the common control, not merely the previous execution in the queue.
+
+All runs completed and their 1024-square PNGs and registered hashes verified.
+The control, single-frame, alias and both band sizes without direct padding
+are byte-identical. The three direct-padding variants match each other but
+differ from the control; tiling has a third output. See the feature page for
+pixel differences. The reviewer assessed both changed outputs (direct padding
+and tiling) as visually good; this does not imply pixel equality. No positive final native
+failure or quarantine value was observed in the recorded transformer counters.
+Separate runtime/attention rows are not replaced by this feature control.
+These are sequential single observations, not repeatability guarantees.
+
+See [feature phase measurements](qwen-image-21-phases.md#linux-qwen-vae-features).
+
+## Windows VAE feature study
+
+The [nine-case Windows study](model-features.md#windows-qwen-vae-observations)
+uses the same Base BF16 checkpoint, capybara prompt, 1024-square resolution,
+20 steps, seed 42, guidance 1, standard KV cache and default SDPA as the runtime
+recipe. Native encoder residency is 4 GiB, native BF16 VAE residency 0.375 GiB,
+total staging 0.625 GiB and source cache/registration 16 GiB each. Dispatcher
+was active; purge, reclaim, compilation and quantization were off.
+
+The control alone built the final transformer profile in two three-step runs
+without decode. All nine measurements applied that profile with matching shapes
+and exactly 671,088,640 configured resident-weight bytes. Calibration is outside
+inference latency. Driver 617.42, installed DDO/allocator RC5, Torch 2.12.1+cu132
+and Diffusers 0.41.0 were fixed. Artifacts, complete phase memory, native counters,
+PNG dimensions and comparisons with control and branch parents were verified.
+No positive final failure or quarantine counters were observed in component
+reports. Pixel equality and Windows visual acceptance are separate; see the
+feature page for the per-branch results and pending visual review.

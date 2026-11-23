@@ -15,7 +15,7 @@ From the examples repository root, run this in PowerShell or Bash:
 uvx --from mkdocs==1.6.1 mkdocs serve --config-file mkdocs.yml --dev-addr 127.0.0.1:8000
 ```
 
-Open <http://127.0.0.1:8000/> in Chrome or Edge. Use the browser's page-translation
+Open <http://127.0.0.1:8000/ddo-examples/> in Chrome or Edge. Use the browser's page-translation
 menu to read in Portuguese or another language. Browser translation may send page
 text to the translation provider; it does not modify the English Markdown sources.
 If automatic translation is not offered, select English as the page's source

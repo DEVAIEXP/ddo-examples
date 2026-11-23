@@ -1,39 +1,255 @@
-# Reproduce the comparisons
+# Reproduction
 
-Use the [installation guide](../user/setup.md) and the selected model's runner.
-Download weights before timing; `--local-files-only` requires the relevant
-model and custom code to be cached.
+The benchmark controller runs the same public runners used in the
+[model guides](../user/README.md). It adds a queue, profile checks, output
+validation and resumable sessions. You can use the controller for a series or
+run an individual recipe directly.
 
-## Match the workload
+## Prepare the environment
 
-Check the [reference hardware and platform limits](hardware.md) and record your
-own configuration before comparing timings or memory usage.
+Follow the [installation guide](../user/setup.md) for your platform.
+Run the controller from the repository root with that environment's Python.
+Windows, native Linux and WSL use separate environments and native libraries.
 
-Keep the model, precision, prompt, input media, seed, resolution, schedule and
-steps unchanged. For video, also match duration, frame rate and input-audio
-conditioning. Keep encoder and VAE strategies, compute options and runtime
-capacities consistent with the model's table.
+Download the checkpoint and prepare the reviewed custom blocks before measuring.
+Use `--checkpoint` to select the local checkpoint snapshot.
+Video recipes also need FFmpeg, FFprobe and the conditioning files distributed
+under `benchmarks/inputs/`. The eight-second LTX Video recipe uses
+`benchmarks/inputs/ltx23-video-5s/man_guitar.png` and
+`benchmarks/inputs/ltx23-video-5s/diff_vocal_song.mp3`; the directory name is
+retained for the shared inputs, not the measured video duration.
+See the [hardware notes](hardware.md) and
+[runtimes and presets](../user/presets.md) for the scope of the published results.
 
-| Model | Workload | Conditions and runner instructions |
-| --- | --- | --- |
-| LTX image | 1280×704, 8 steps, seed 43 | [Image comparison](ltx23-image.md) and [runner guide](../user/ltx2-image.md) |
-| LTX video | 1280×704, 5 seconds at 24 fps, 8 steps, seed 43 | [Video comparison](ltx23-video.md) and [runner guide](../user/ltx2-video.md); distinguish image-only from image-plus-audio conditioning |
-| Qwen Image 2.1 base | 512×512, 20 steps, seed 42; separate 1024×1024 VAE cases | [Qwen comparison](qwen-image-21.md) and [runner guide](../user/qwen-image-21.md) |
+| Recipe | Workload |
+| --- | --- |
+| `ltx23-image` | BF16, 1280×704, eight steps, seed 43 |
+| `qwen-image21` | Base BF16, 1024×1024, 20 steps, seed 42 |
+| `ltx23-video-8s` | BF16, 1280×704, eight seconds, 193 frames at 24 fps, eight steps, seed 43, image and audio conditioning |
 
-Do not mix Windows, native Linux and WSL observations as one controlled
-comparison. Their registration limits, driver behavior and offload settings differ.
+These are the current measured workloads. The controller's nominal VRAM setting
+is not a limit on total GPU memory, and a published result does not guarantee
+that a recipe fits another machine.
 
-## Collect comparable metrics
+## Choose a series and preview its commands
 
-Use `--memory-monitor rss --show-metrics --save-metrics` where supported.
-On Windows, request `--purge-before-transformer` from an elevated terminal
-and verify that it succeeded. Purge is a no-op outside Windows.
+List the cases available for the selected platform, model and family:
 
-Compare denoise and tracked total separately. Tracked totals exclude command
-startup and downloads. Callback intervals are not completed GPU timings.
-GPU absolute peaks, baseline-relative deltas, RSS and USS have different meanings;
-see [metric definitions](glossary.md).
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family runtime --list-cases
+```
 
-Measurements are single observations, not guaranteed performance on other
-hardware. Contributor collection procedures belong in
-[recording rules](recording.md).
+Omit `--execute` to inspect the planned commands without starting a model:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family runtime --checkpoint "C:/models/ltx23-image-snapshot"
+```
+
+Replace the example checkpoint path with your local snapshot.
+Add `--case one-shot-fast`, for example, to select a single case.
+Case names use hyphens; the DDO preset passed to the runner is
+`one_shot_fast`. The preview shows the exact runner arguments.
+
+| Family | Purpose |
+| --- | --- |
+| `runtime` | Compare the selected DDO presets with official Diffusers Leaf |
+| `attention` | Compare transformer attention methods on VMM Fast |
+| `precision` | Run the available saved FP8 or SDNQ INT4 comparisons |
+| `components` | Compare supported encoder or VAE routes |
+| `reuse` | Measure two LTX Image generations in one process |
+| `model-features` | Measure the model's cumulative feature series |
+
+Availability depends on the model and platform. Use `--list-cases` or
+`--help` for the selected family rather than assuming every combination exists.
+The primary video runtime series excludes the experimental NVMe baseline.
+
+## Validate and execute
+
+Preflight checks the environment, selected library, checkpoint and custom-block
+identities before a model starts. It does not initialize CUDA. When explicitly
+selecting a standalone VAE or FP8 repository, preparation can download its files
+to the Hugging Face cache.
+
+Supply the SHA256 of the native library approved for your installed environment.
+Do not copy a hash from another platform or build. For Windows:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family runtime --checkpoint "C:/models/ltx23-image-snapshot" --expected-dll-sha256 APPROVED_SHA256 --preflight
+```
+
+After reviewing the preview and a successful preflight, execute the same series:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family runtime --checkpoint "C:/models/ltx23-image-snapshot" --expected-dll-sha256 APPROVED_SHA256 --session-action restart --execute
+```
+
+For Linux or WSL, select `--platform linux` or `--platform wsl`, use
+the corresponding environment and paths, and replace `--expected-dll-sha256`
+with `--expected-library-sha256`. Video commands accept
+`--ffmpeg-bin` with the directory containing FFmpeg and FFprobe.
+
+The controller follows the selected recipe's purge policy. Purge is not a
+universal prerequisite. Windows recipes that request standby purge need the
+required Windows permissions; native Linux and WSL do not use Windows standby purge.
+
+## What happens during a run
+
+1. The controller records the execution identity and checks compatibility.
+2. It reuses a compatible final profile or runs the required calibration stages.
+   VMM Fast can need two three-step calibrations; the second is skipped if the
+   first produces a final profile. Official Leaf needs no DDO profile.
+3. It applies the final profile and runs the measured recipe. Calibration time
+   is kept separate from inference time.
+4. It validates the metrics, effective configuration and generated image or
+   video before marking a case complete.
+
+Profiles are specific to their workload and execution route. A different input
+shape, precision or feature configuration can require another profile.
+Accepted profiles are also exported to the normal DDO profile store for later
+runner use; conflicting profiles are preserved rather than silently replaced.
+
+Progress shows completed and total cases, the current case and stage, and the
+output directory. A calibration that is unnecessary is reported as skipped.
+
+## Results and continuation
+
+By default, sessions are written under:
+
+```text
+outputs/benchmarks/<platform>/<recipe>/sessions/<session-id>/
+```
+
+Use `--output-root` to choose another base directory. A session contains its
+manifest, individual attempts, console logs, metrics, profiles and generated
+media. Keep the manifest together with the referenced files.
+
+At the first failure, the controller preserves the attempt, reports how many
+cases remain and stops. Correct the cause before continuing; it does not
+automatically retry the model.
+
+To resume a compatible session, repeat the selection and identity arguments with
+`--session-action continue`:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family runtime --checkpoint "C:/models/ltx23-image-snapshot" --expected-dll-sha256 APPROVED_SHA256 --session-action continue --execute
+```
+
+Completed, verified work is skipped. The first incomplete stage gets a new
+attempt. `--session-action restart` creates another session and preserves the
+previous one. An interactive invocation can offer this choice; non-interactive
+execution must make it explicit. Locks and active-child checks prevent
+simultaneous continuation. An incompatible session cannot be resumed by changing
+only its manifest.
+
+## Attention and model features
+
+Attention comparisons use VMM Fast with SDPA as the control. For example:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family attention --attention-runtime vmm-fast --checkpoint "C:/models/ltx23-image-snapshot"
+```
+
+The controller looks for a compatible verified SDPA control, or prepares one
+before the requested attention cases. `--reference-manifest` selects a
+particular control explicitly; an incompatible explicit reference is rejected.
+Operator confirmation runs separately from the timed measurement.
+Install the selected method's dependencies as described in the
+[installation guide](../user/setup.md).
+
+The `model-features` family measures the feature sequence documented in
+[cumulative model features](model-features.md). It preserves the control's
+resident budget. Video cases use profiles matching their feature shapes;
+Qwen shares the control profile for its VAE feature cases. Output comparisons
+include the control and the parent of each branch.
+
+## Optional series
+
+### Windows LTX Image process reuse
+
+The `reuse` family measures two generations in one process, with a dedicated
+`warm_process` profile:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-image --family reuse --case warm-process --checkpoint "C:/models/ltx23-image-snapshot"
+```
+
+The reported combined total covers both generations. The random generator
+advances, so the final PNG is not expected to equal a single seed-43 generation.
+
+<a id="windows-ltx-video-runtime-series"></a>
+
+### LTX Video runtime series
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe ltx23-video-8s --family runtime --checkpoint "C:/models/ltx23-video-snapshot" --ffmpeg-bin "C:/ffmpeg/bin"
+```
+
+The preview shows the selected platform's encoder, transformer and VAE routes,
+purge policy and exact-streaming decode settings. See the
+[video results](ltx23-video.md) and [manual video recipes](../user/ltx2-video.md).
+
+<a id="windows-ltx-image-sdnq-int4"></a>
+<a id="qwen-saved-sdnq-int4-pair"></a>
+<a id="ltx-video-saved-sdnq-int4-pair"></a>
+
+### Saved SDNQ INT4 comparisons
+
+For a supported Windows model, select `--family precision` and provide the
+saved INT4 snapshot through `--sdnq-model-path`:
+
+```shell
+python -B benchmarks/run_benchmark.py --platform windows --recipe qwen-image21 --family precision --checkpoint "C:/models/qwen-image21-snapshot" --sdnq-model-path "C:/models/qwen-image21-int4-snapshot"
+```
+
+The pair uses official Leaf and DDO's `sdnq_runtime` with the same saved
+quantized transformer and auxiliary weights. DDO uses its own SDNQ profile:
+a two-step baseline and an optional two-step validation, without decode.
+A dense BF16 or VMM residency profile cannot substitute for it.
+
+Equivalent model-specific commands are in the optional weight-format sections
+of the [LTX Image](../user/ltx2-image.md),
+[Qwen](../user/qwen-image-21.md) and [LTX Video](../user/ltx2-video.md) guides.
+The video INT4 investigation remains unresolved; its availability is not a
+performance recommendation.
+
+Saved video FP8 is a separate precision case, `fp8-weight-only`, selected
+with `--fp8-model-path`. It uses a separate profile and does not convert weights
+during the measured run. See the [video guide](../user/ltx2-video.md).
+
+These examples are previews. Add the platform's expected-library hash,
+`--preflight`, then the explicit session action and `--execute` as above
+when ready to run.
+
+## Run a recipe manually
+
+The controller is optional. Each model guide contains direct commands with
+arguments passed to the public runner:
+
+| Model | Manual recipes |
+| --- | --- |
+| LTX 2.3 Image | [LTX Image runners and presets](../user/ltx2-image.md) |
+| Qwen Image 2.1 | [Qwen runners and presets](../user/qwen-image-21.md) |
+| LTX 2.3 Video | [LTX Video runners and presets](../user/ltx2-video.md) |
+
+Choose the same preset, component routes, attention method, inputs, precision,
+seed, steps, purge policy and profile used by the benchmark line.
+The controller's preview is the exact command reference when reproducing a
+particular case. Run any required profile-build commands first, then the
+measurement with that final profile.
+
+The Qwen official Leaf recipe on WSL explicitly uses
+`PYTORCH_ALLOC_CONF=expandable_segments:False`. Apply this assignment to that
+manual recipe only; it does not change other recipes or the shared runner default.
+
+## Publish benchmark tables
+
+Keep the original metrics, manifest and output identity with every accepted
+measurement. Compare matching workloads and report the driver, environment,
+effective routes, attention method and profile. Verify the generated media
+before accepting a result.
+
+Use the current model pages' Full run, Denoising and VAE decode tables.
+Full run includes all tracked phases; denoising and VAE decode use their own
+measured intervals and peaks. Saving time is excluded from isolated VAE decode.
+Never fill a missing phase peak with a global peak, treat missing values as zero,
+or combine phases from different runs. See the [measurement glossary](glossary.md).

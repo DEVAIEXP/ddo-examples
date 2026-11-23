@@ -1,53 +1,57 @@
 # Install packages for the examples
 
-This path uses installed packages, not editable DDO checkouts. For modifying
-local sources, use [developer setup](../developer/setup.md) instead.
+Follow the common steps first, then choose the Windows or Linux/WSL section.
+Install optional packages only for the features you plan to use.
+For source development, see [developer setup](../developer/setup.md).
 
-## Prerequisites
+## Common steps
 
-Use Python 3.12, uv, Git and a compatible NVIDIA GPU/system driver.
-Clone the examples and install the packages below. No MSVC, CMake, nvcc or
-Docker is needed to use the packaged native allocator.
+Use Python 3.12, uv, Git and a compatible NVIDIA GPU/system driver. The packaged
+native allocator needs no compiler or Docker installation.
 
-Video/audio also needs compatible FFmpeg system shared libraries. On Ubuntu
-22.04, install the distribution's `ffmpeg` package. Package names differ on other
-distributions. WSL uses the Windows GPU driver, not a Linux GPU driver.
-
-On Windows, use an FFmpeg **shared** build and put its `bin` directory on PATH
-in the same terminal before starting an audio-conditioned runner. An executable-only
-FFmpeg installation is insufficient for TorchCodec: it needs the shared DLLs
-(including `avcodec`, `avformat` and `avutil`). For an existing shared installation:
-
-```powershell
-$env:PATH = 'C:\path\to\ffmpeg-shared\bin;' + $env:PATH
-```
-
-The runner and its bootstrap child inherit this PATH. Check audio decoding before
-loading the model; a TorchCodec library-loading error is a dependency failure,
-not a denoising result.
-
-## 1. Clone the examples
-
-Clone only `ddo-examples` to use the runners. DDO and the allocator are installed
-as packages; their source repositories are not required. Choose a parent folder,
-then run:
+Clone the examples:
 
 ```sh
 git clone https://github.com/DEVAIEXP/ddo-examples.git
 cd ddo-examples
 ```
 
-You do not install the examples as a Python package: run their scripts from this
-checkout. One environment holds DDO, the allocator and all runner dependencies.
+DDO and the allocator are installed as packages; their source repositories are
+not required. Run the examples directly from this checkout. Keep Windows,
+native Linux and WSL environments separate.
 
-## 2. Create one environment
+The commands below install DDO and allocator `0.1.0rc5`, together with the
+model dependencies in `pyproject.toml` and versions in `constraints.txt`.
+They select an explicit Python environment, so activation is not needed during
+installation. Matching packages already installed are reused. Stop if a command
+fails. This guide uses `uv pip`.
 
-From the cloned examples root, create a uv-managed Python environment. This
-avoids inheriting a Conda interpreter and its C++ runtime libraries. Keep
-Windows, native Linux and WSL environments separate. If you already installed
-DDO into a compatible environment, skip creation and select its Python below.
+### Choose optional features
 
-### Windows PowerShell
+Ordinary SDPA recipes need only the basic installation. Installing an extra
+makes a feature available; select it separately in the model's runner.
+
+| If you want to use… | Install… |
+| --- | --- |
+| FlashAttention 2 | A compatible FlashAttention 2 wheel |
+| Sol-Attn for LTX video | FlashAttention 2 **and** Triton |
+| Saved FP8 weight-only models | The `fp8` extra (TorchAO) |
+| SDNQ quantized models | The `sdnq` extra |
+
+<a id="optional-sol-attn-for-ltx-video"></a>
+
+Sol-Attn source is included in `kernels/sol_attn` in this examples repository.
+It uses FlashAttention 2 for the first video transformer block and Triton for
+the remaining eligible blocks. After installation, select
+`--video-self-attention sol-attn`. See [optional kernels](kernels.md) for
+licenses, supported conditions and measured results.
+
+## Windows PowerShell
+
+### Create the environment
+
+Run from the cloned examples root. If you already have a compatible package
+environment, set `$python` to its interpreter instead of creating another one.
 
 ```powershell
 $examples = (Get-Location).Path
@@ -55,24 +59,7 @@ uv venv --managed-python --python 3.12.12 .venv-packages
 $python = (Resolve-Path (Join-Path $examples '.venv-packages/Scripts/python.exe')).Path
 ```
 
-### Native Linux or WSL Bash
-
-```bash
-examples="$PWD"
-uv venv --managed-python --python 3.12.12 .venv-packages
-python="$examples/.venv-packages/bin/python"
-```
-
-Explicit interpreter paths select the environment without activation. Do not
-set PYTHONPATH or DDO_VMM_LIBRARY_PATH to development checkouts or old builds.
-
-## 3. Install packages and model dependencies
-
-DDO and the allocator are installed from PyPI through `pyproject.toml`, pinned
-to the validated `0.1.0rc3` pair. CUDA Torch packages come from the PyTorch index.
-Stop if any command fails.
-
-### Windows PowerShell
+### Install the basic packages
 
 ```powershell
 uv pip install --python $python --link-mode copy --index-url https://download.pytorch.org/whl/cu132 'torch==2.12.1+cu132' 'torchvision==0.27.1+cu132' 'torchcodec==0.15.0+cu132'
@@ -80,30 +67,37 @@ uv pip install --python $python --no-sources --link-mode copy --index-url https:
 uv pip check --python $python
 ```
 
-### Native Linux or WSL Bash
+### Optional: FlashAttention 2
 
-```bash
-uv pip install --python "$python" --link-mode copy --index-url https://download.pytorch.org/whl/cu132 'torch==2.12.1+cu132' 'torchvision==0.27.1+cu132' 'torchcodec==0.15.0+cu132'
-uv pip install --python "$python" --link-mode copy --index-url https://download.pytorch.org/whl/cpu 'torchaudio==2.11.0+cpu'
-uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml"
-uv pip check --python "$python"
+This extra installs the third-party Windows wheel for Python 3.12,
+Torch 2.12.1 and CUDA 13.2:
+
+```powershell
+uv pip install --python $python --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra flash-attn
 ```
 
-CPU TorchAudio handles audio decoding; model inference remains CUDA.
-Dependencies come from `pyproject.toml`, with versions constrained by
-`constraints.txt`. Already installed matching packages are reused.
-No wheel folder or sibling source checkout is needed.
+### Optional: Sol-Attn
 
-For optional recipes, add the required `--extra fp8`, `--extra kernels` or
-`--extra sdnq` to the final metadata-install command. Install only what the runner
-uses. This setup uses `uv pip`; do not substitute `uv sync` without a matching
-package-based lock.
+Install both dependencies in one command. The `kernels` extra selects
+`triton-windows` on Windows:
 
-The optional `--extra flash-attn` installs a third-party Windows FlashAttention
-2.9.1 wheel for Python 3.12, Torch 2.12.1 and CUDA 13.2. It does not install a
-Linux/WSL build or change the runners' attention backend. Installation alone
-does not establish kernel execution; backend and attention-mask compatibility
-must be validated separately. Ordinary recipes do not require this extra.
+```powershell
+uv pip install --python $python --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra flash-attn --extra kernels
+```
+
+### Optional: FP8 or SDNQ
+
+For saved FP8 weight-only models:
+
+```powershell
+uv pip install --python $python --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra fp8
+```
+
+For SDNQ models:
+
+```powershell
+uv pip install --python $python --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra sdnq
+```
 
 ### Configure FFmpeg on Windows
 
@@ -133,7 +127,104 @@ Check audio-library loading before generating, using the selected `$python`:
 Expected: `TorchCodec: PASS` and `CUDA initialized: False`. This checks library
 loading, not model execution or audio/video output.
 
-## 4. Prepare model code and run
+After installing your chosen options, check the environment:
+
+```powershell
+uv pip check --python $python
+```
+
+## Native Linux or WSL Bash
+
+WSL uses the Windows NVIDIA driver. Install Linux dependencies inside WSL,
+but do not install a Linux NVIDIA GPU driver there.
+
+### Create the environment
+
+Run from the cloned examples root. If you already have a compatible package
+environment, set `python` to its interpreter instead.
+
+```bash
+examples="$PWD"
+uv venv --managed-python --python 3.12.12 .venv-packages
+python="$examples/.venv-packages/bin/python"
+```
+
+### Install the basic packages
+
+```bash
+uv pip install --python "$python" --link-mode copy --index-url https://download.pytorch.org/whl/cu132 'torch==2.12.1+cu132' 'torchvision==0.27.1+cu132' 'torchcodec==0.15.0+cu132'
+uv pip install --python "$python" --link-mode copy --index-url https://download.pytorch.org/whl/cpu 'torchaudio==2.11.0+cpu'
+uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml"
+uv pip check --python "$python"
+```
+
+CPU TorchAudio handles audio decoding; model inference remains CUDA.
+
+### Optional: FlashAttention 2
+
+Install a Linux wheel matching Python 3.12, Torch 2.12.1, CUDA 13.2 and the
+Torch C++ ABI. The `flash-attn` extra above supplies only a Windows wheel;
+it does not install FlashAttention on Linux or WSL. Replace the path below
+with your compatible wheel:
+
+```bash
+uv pip install --python "$python" --no-deps /path/to/compatible-flash-attn.whl
+```
+
+An existing compatible installation can be reused. Check the installed versions:
+
+```bash
+"$python" -I -B -c "import torch, flash_attn; print('Torch:', torch.__version__); print('FlashAttention:', flash_attn.__version__)"
+```
+
+### Optional: Sol-Attn
+
+First install FlashAttention 2 as above, then add Triton:
+
+```bash
+uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra kernels
+```
+
+The `kernels` extra selects `triton` on Linux and WSL. Sol source is already
+included with the examples; no separate source checkout is needed.
+
+### Optional: FP8 or SDNQ
+
+For saved FP8 weight-only models:
+
+```bash
+uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra fp8
+```
+
+For SDNQ models:
+
+```bash
+uv pip install --python "$python" --no-sources --link-mode copy --index-url https://pypi.org/simple/ --constraint "$examples/constraints.txt" -r "$examples/pyproject.toml" --extra sdnq
+```
+
+### Configure FFmpeg for video/audio
+
+Install compatible system FFmpeg shared libraries. On Ubuntu 22.04:
+
+```bash
+sudo apt install ffmpeg
+```
+
+Package names differ on other distributions. Check library loading before
+loading a model:
+
+```bash
+"$python" -I -B -c "import torch, torchcodec; print('TorchCodec: PASS'); print('CUDA initialized:', torch.cuda.is_initialized())"
+```
+
+Expected: `TorchCodec: PASS` and `CUDA initialized: False`. This checks library
+loading, not generation. After installing your chosen options:
+
+```bash
+uv pip check --python "$python"
+```
+
+## Prepare model code and run
 
 Prepare the LTX and Qwen code clones using the same Python:
 

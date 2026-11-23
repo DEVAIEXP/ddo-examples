@@ -8,7 +8,7 @@ rather than hiding generation behind a mode dispatcher.
 
 ```mermaid
 flowchart TD
-    CLI["1. Runner: arguments and sources"] --> BOOT["2. DDO bootstrap for native execution"]
+    CLI["1. Runner: lightweight controls and sources"] --> BOOT["2. DDO bootstrap before CUDA-owning imports"]
     BOOT --> CODE["3. Reviewed custom blocks and components"]
     CODE --> ENCODE["4. Encode prompts (native VMM or leaf text encoder); retain embeddings"]
     ENCODE --> AUX["5. Retire encoder; prepare conditioning"]
@@ -34,8 +34,10 @@ Boxes 1–10 describe the staged runner flow. Boxes 11–13 identify supporting
 owners, not additional generation stages. Native bootstrap applies only when
 the selected route requires it.
 
-1. **Arguments and sources.** The runner parses model inputs, preset/backend,
-   generation settings and component-source locations.
+1. **Arguments and sources.** Lightweight setup identifies model inputs,
+   preset/backend, generation settings and component-source locations without
+   initializing CUDA. This box does not authorize loading model weights or
+   CUDA-owning dependencies before native bootstrap.
 2. **Native bootstrap.** When required, DDO relaunches the command in a fresh
    child and installs the allocator before CUDA-owning imports.
 3. **Custom blocks and components.** Loads trusted model-specific modular code
@@ -59,9 +61,12 @@ the selected route requires it.
    DDO does not infer the workload shape.
 7. **Modular denoise.** Executes the model's modular schedule and forward calls,
    using the prepared conditioning and selected offload route. The VMM entries
-   wrap it in `profile_run()`; with `--build-ddo-profile` (run twice with
-   `--steps 3`: floor, then hardware ceiling) DDO measures this region, saves the
-   result and the runner stops before decode.
+   wrap it in `profile_run()`; with `--build-ddo-profile`, DDO measures this
+   region, saves the result and the runner stops before decode. VMM capacity
+   calibration uses up to two three-step runs: floor, then hardware ceiling.
+   If the floor run already produces a final profile, the second run is skipped.
+   Linear and SDNQ profiles have their own calibration rules; they do not reuse
+   the VMM residency profile.
 8. **Transformer retirement.** Reads back the required latents and releases
    transformer references after the required CUDA work completes. A host callback
    returning does not prove GPU completion, and unloading a component does not
@@ -72,8 +77,10 @@ the selected route requires it.
    algorithms, not allocator policies. `--video-decoder exact-streaming` selects
    the exact temporal streaming decoder of the custom blocks (stateful
    non-causal temporal convolutions that pad only at the true sequence ends,
-   validated against the whole-sequence decoder); the default `streaming-tiles`
-   is unchanged.
+   validated against the whole-sequence decoder). It is the default when
+   `--stream-video-decode` is enabled. `--video-decoder streaming-tiles` selects
+   overlapping temporal windows as an alternative for lower memory use.
+   Streaming requires `--decode-device cuda:0`; CPU decode remains available.
 10. **Media and reports.** Saves generated output and uses the shared RunTracker
     (`scripts/helpers/inference_utils.py`) to combine host phase/step and memory
     measurements with public DDO reports.
@@ -94,7 +101,25 @@ the selected route requires it.
 The dotted arrow from 7 to 10 is the profile build path: it saves the run
 report without decoding.
 
+## Optional attention kernel ownership
+
+The LTX video entries, including the dedicated official Leaf entry and legacy
+aliases, share `scripts/helpers/ltx2/video_self_attention.py`. Selecting Sol
+loads the reviewed upstream source from `kernels/sol_attn` through
+`kernels/sol_loader.py`. The loader verifies the provenance manifest and preserves
+upstream package imports without changing `sys.path` or requiring a `.pth`.
+Importing the source-identity helper does not import Torch or Triton. Selecting
+the default attention route does not load Sol. The benchmark controller uses
+the same source manifest and records actual file hashes.
+
+Windows, native Linux and WSL use this same host code with separate environments
+and optional platform dependencies. Packaging the source does not expand selected
+GPU acceptance. The generic DDO wheel and the native allocator do not contain
+this model attention policy. See [optional Sol setup](../user/setup.md#optional-sol-attn-for-ltx-video)
+for dependencies and [attention controls](../user/ltx2-video-parameters.md#video-self-attention-backend)
+for the current model scope.
+
 See [DDO runtime architecture](https://github.com/DEVAIEXP/diffusers-dynamic-offloader/blob/main/docs/developer/architecture.md)
 for the other side of the integration boundary,
 [diagnostics](diagnostics.md) for timing and cleanup semantics, and
-[interface compatibility](runner-interface.md) for supported older commands.
+[runner interface contract](runner-interface.md) for the public controls.

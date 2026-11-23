@@ -7,6 +7,8 @@ docs_dir: docs
 site_dir: .internal/docs-preview/site
 dev_addr: 127.0.0.1:8000
 use_directory_urls: true
+markdown_extensions:
+  - md_in_html
 theme:
   name: mkdocs
   locale: en
@@ -27,23 +29,22 @@ nav:
   - User guides:
       - Overview: docs/user/README.md
       - Package installation: docs/user/setup.md
-      - Presets: docs/user/presets.md
+      - Runtimes and presets: docs/user/presets.md
       - Shared controls: docs/user/runner-controls.md
+      - Optional kernels: docs/user/kernels.md
       - LTX image: docs/user/ltx2-image.md
       - LTX video: docs/user/ltx2-video.md
       - Qwen Image 2.1: docs/user/qwen-image-21.md
-      - Qwen SDNQ: docs/user/qwen-sdnq.md
   - Benchmarks:
       - Overview: docs/benchmarks/README.md
-      - Summary: docs/benchmarks/summary.md
-      - Runtimes and presets: docs/benchmarks/runtimes.md
       - Labels and memory: docs/benchmarks/glossary.md
       - LTX image: docs/benchmarks/ltx23-image.md
+      - LTX image phases: docs/benchmarks/ltx23-image-phases.md
       - LTX video: docs/benchmarks/ltx23-video.md
+      - LTX video phases: docs/benchmarks/ltx23-video-phases.md
       - Qwen Image 2.1: docs/benchmarks/qwen-image-21.md
-      - Qwen image features: docs/benchmarks/qwen-image-21-features.md
-      - RC5 validation on Windows: docs/benchmarks/rc5-windows.md
-      - Recording rules: docs/benchmarks/recording.md
+      - Qwen Image 2.1 phases: docs/benchmarks/qwen-image-21-phases.md
+      - Cumulative model features: docs/benchmarks/model-features.md
       - Reproduction: docs/benchmarks/reproduction.md
   - Developer guides:
       - Overview: docs/developer/README.md

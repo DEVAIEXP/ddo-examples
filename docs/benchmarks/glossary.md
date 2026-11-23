@@ -8,21 +8,33 @@ much as the values. The model page fixes workload, platform and executed routes.
 | Label | Meaning |
 | --- | --- |
 | Platform | Operating environment: Windows, native Linux or WSL. |
+| Preset | Resolved DDO configuration, such as `one_shot_fast` or `vmm_fast`. Official Leaf identifies the reference runner rather than a DDO preset. The same preset can appear with different explicit component routes. |
 | Transformer runtime | Executed denoising implementation: linear_runtime, vmm_fast_runtime, protected vmm_runtime, sdnq_runtime or the official control. |
-| DDO selector | Requested backend/preset and its resolution; auto is backend-dependent. See [runtime mapping](runtimes.md). |
+| DDO selector | Requested backend/preset and its resolution; auto is backend-dependent. See [runtimes and presets](../user/presets.md#transformer-runtimes). |
+| Capacity profile | Saved calibration selected with `--ddo-profile`. It records a compatible workload and capacity recommendation; it is not the preset. Calibration time is separate from inference time. |
+| Self-attention method / joint-attention method | Transformer attention implementation selected for the comparison. LTX uses self-attention; Qwen jointly attends to image and text tokens. Requested and diagnostically confirmed operators are distinct. |
 | VAE route | Decoder placement/strategy, independently from the transformer: resident or official leaf, for example. Resident keeps decoder weights on the GPU; leaf uploads offloaded modules as needed. |
-| Platform / VAE | Compact label used in decode-only tables, with transformer identity inherited from the parent workload table. |
+| Platform / VAE | Compact label in some decode comparisons, with transformer identity inherited from the parent workload table. |
 | Route | Executed transformer/offload implementation, such as DDO linear, native VMM or official Diffusers leaf. It is not necessarily the VAE strategy. |
-| Denoise wall (s) | Elapsed host-clock time for the named denoising region. Includes compute and waits inside that region, not just GPU kernels. Some runners include latent CPU readback; each table identifies its scope. |
-| Wall average / phase average (s/step) | Denoise wall time divided by executed steps. Includes first-step setup/warmup and any readback in the region. It is not the speed of a typical warmed-up step. |
+| Latency (s) | Elapsed host-clock time for the named full run or phase. Includes work and waits inside that interval, rather than only GPU kernels. Read the section heading to identify its scope. |
+| Denoising | Sampling-loop interval: transformer prediction, weight transfers and scheduler/latent updates. Some runners include CPU latent readback or transformer retirement; the model page states the recorded boundary. It is not an isolated transformer-forward timer. |
+| Average (s/step) | Denoising latency divided by executed steps. Includes first-step setup/warmup and any readback in that interval. It is not the speed of a typical warmed-up step. Older labels include wall average and phase average. |
+| VAE decode / Video VAE decode | Recorded decode interval, excluding VAE loading/attachment, cleanup and file saving. Video uses the video decode interval, excluding audio decode. Conversion or postprocessing inside the recorded call remains included; model pages state exceptions. |
+| Decode and save (s) | Combined decode/export interval where explicitly shown. It is broader than VAE decode latency and cannot replace a missing isolated decode measurement. |
 | CUDA phase (s) | Completed GPU-event duration on the observed compute stream, including stream dependencies. It is not summed pure-kernel time or automatically identical to wall time. |
 | CUDA warm (s/step) | Mean of completed CUDA step intervals after the first step; selected eight-step image cases use steps 2–8. Available only when those event intervals were recorded successfully. |
-| Tracked total (s) | Total of the runner's tracked pipeline interval, including its component loading/setup, encoding, denoise, cleanup, decode/save and recorded purge where executed. Not complete command startup: imports, bootstrap and first downloads are outside the stated scope. |
-| Peak GPU (absolute, GiB) | Highest sampled driver-reported used GPU memory during the stated interval, without subtracting the pre-run baseline. Main comparison rows normally show the global tracked-run peak. |
-| Peak RAM (RSS, GiB) | Highest sampled resident memory of the Python process during the stated interval. Main comparison rows normally show the global tracked-run peak. |
+| Full run / Tracked total (s) | Runner's tracked pipeline interval, including component loading/setup, text encoding, conditioning where used, denoising, cleanup, decoding, conversion and file saving, plus purge where executed. Calibration, command startup, bootstrap, imports and initial downloads are excluded. It is not end-to-end command latency. |
+| Peak GPU (absolute, GiB) | Highest sampled driver-reported used GPU memory during the stated interval, without subtracting the pre-run baseline. Full-run tables show the global tracked-run peak; denoising and decode tables show only their own interval. |
+| Peak RAM (RSS, GiB) | Highest sampled resident memory of the Python process during the stated interval. Full-run tables show the global tracked-run peak; denoising and decode tables show only their own interval. |
 | Decode peak GPU / RAM | Same memory definitions, but sampled only during decode. These are phase peaks, not the global peaks. |
 | Source registration (MiB) | Configured ceiling for registering retained source bytes with CUDA. Separate from committed source storage, staging registrations, active GPU weights and observed memory peaks. |
 | N/A | Not measured, unavailable or not applicable as explained by the table. Never zero or an implicit successful test. |
+
+In comparison tables, 🟢 ↓ marks a lower value and 🔴 ↑ marks a higher value
+than that table's control. Ties at displayed precision and unavailable values
+have no arrow. These markers describe observations, not an overall ranking;
+higher memory can accompany faster execution. Detailed phase tables omit arrows.
+For cumulative feature studies, use the stated control and branch parent.
 
 ## RSS is a metric; peak is a statistic
 
@@ -91,12 +103,18 @@ A phase label describes the measured interval, not just a model forward.
 | --- | --- |
 | LTX image | Monitored prompt phase: encoder/tokenizer loading, encoding and cleanup, including purge where it occurs inside that phase. Connectors are in the separate generate aggregate. |
 | LTX video | Staged text-encoder phase, including its loading/encoding/cleanup. Connectors and conditioning encoders are separate. |
-| Qwen | Separate encoder load, attachment, encode and cleanup rows. The encode row excludes its neighboring setup/cleanup phases. |
+| Qwen | Text encoder aggregates combine the recorded load, attachment, encode and cleanup phases where available. An individual encode row excludes neighboring setup/cleanup. The standalone Leaf generation aggregate does not establish a separate encoder measurement. |
 
 Do not compare these as identical pure-forward timers. Phase memory values are
 sampled within the named interval; they cannot be assigned to a smaller event
 inside it. In particular, image generate memory is not isolated denoise memory.
 Model detail pages identify the source boundaries and any decode aggregates.
+
+For an aggregate built from disjoint recorded phases, latency is their sum and
+memory is their largest recorded peak. Nested intervals are not added. A
+decode-call timer can establish latency without establishing separate memory
+peaks; those peaks remain N/A. No isolated phase is estimated by subtracting
+other phases or by substituting the full-run peak.
 
 ## Global and phase peaks
 
@@ -110,6 +128,6 @@ missed; scheduling/query overhead can alter the effective interval. A successful
 sampled peak below capacity is not a guarantee that another workload will fit.
 A monitor error or missing historical metric cannot count as zero usage.
 
-Use [recording rules](recording.md), [reproduction](reproduction.md) and the model's
+Use the [reproduction guide](reproduction.md) and the model's
 workload/route notes. Compare like timing, memory metric, interval and scope;
 callback intervals are not substitutes for synchronized CUDA warm timing.
