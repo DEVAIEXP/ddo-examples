@@ -9,11 +9,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging, quiet_qwen_processor_doc_notices
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
+    add_image_attention_arguments(parser, qwen=True)
     parser.add_argument("--variant", choices=("base", "turbo"), default="base")
     parser.add_argument("--model-path", help="Override the checkpoint, keeping the explicit variant contract.")
     parser.add_argument("--prompt", default="A capybara wearing a wizard hat, reading by candlelight, oil painting")
@@ -50,7 +60,8 @@ def main():
     from diffusers import AutoencoderKLQwenImage21, FlowMatchEulerDiscreteScheduler, QwenImage21Transformer2DModel
     from diffusers_dynamic_offloader import enable_offload, remove_dynamic_offload, from_pretrained_with_dynamic_offload
     from huggingface_hub import snapshot_download
-    from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+    with quiet_qwen_processor_doc_notices():
+        from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
     from scripts.helpers.inference_utils import RunTracker, flush
 
@@ -89,7 +100,8 @@ def main():
     model_root = Path(model)
     if not model_root.is_dir():
         model_root = Path(snapshot_download(model, allow_patterns=["processor/*"], **loading))
-    processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
+    with quiet_qwen_processor_doc_notices():
+        processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
     text_result = enable_offload(
         text_encoder,
         component="text_encoder",
@@ -131,6 +143,7 @@ def main():
         **loading,
     )
     transformer = loaded.module.eval()
+    configure_image_attention(transformer, args, metrics, qwen=True)
     record_runner_report(args, tracker, loaded.metrics_snapshot(), "transformer_load")
     del loaded
     result = enable_offload(
