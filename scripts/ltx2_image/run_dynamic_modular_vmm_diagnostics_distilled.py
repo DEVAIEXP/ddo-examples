@@ -18,10 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 # Resolve the independent ignored custom-block clone before allocator bootstrap.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "modular_diffusers"))
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
 
 # This is a VMM-only harness: install the native allocator in the relaunched
@@ -30,6 +33,10 @@ from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
 
 if not any(flag in sys.argv[1:] for flag in ("--help", "-h")) and vmm_fast_requested(default_backend="vmm"):
     ensure_vmm_fast_process()
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
@@ -202,10 +209,12 @@ def parse_optional_float(value: str | None) -> float | None:
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, backend_reporting_fields
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
+    add_image_attention_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
     parser.add_argument(
         "--local-files-only",
@@ -1026,6 +1035,7 @@ def main():
             **transformer_load_kwargs,
         )
         prepared_transformer = transformer_load.module
+        configure_image_attention(prepared_transformer, args, run_metrics)
         load_ltx_lora(prepared_transformer, args, run_metrics, record_event)
         prepared_dynamic_offload_hook = transformer_load.hook
         record_event(
@@ -1251,7 +1261,7 @@ def main():
                 enabled=True, native_units=args.ddo_native_timeline,
                 diagnostic_step_wait=args.ddo_diagnostic_step_wait,
             ) if args.ddo_gpu_timing else nullcontext()
-            with transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer:
+            with tracker.subphase(f"denoise{repeat_suffix}"), transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer:
                 denoise_progress_callback.execution_timer = ddo_timer
                 denoise_state = denoise_pipe(
                     latents=prepare_state["latents"],

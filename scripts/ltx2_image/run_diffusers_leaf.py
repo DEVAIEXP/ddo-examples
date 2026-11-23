@@ -5,6 +5,10 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 from scripts.ltx2_image.run_dynamic_modular_distilled import main
 
 

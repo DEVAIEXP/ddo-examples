@@ -9,17 +9,25 @@ This is the small integration shape a host app should need:
 import argparse
 import os
 import sys
-from ddo_vmm_bootstrap import ensure_vmm_fast_process
-
-if __name__ == "__main__" and not any(flag in sys.argv[1:] for flag in ("--help", "-h")):
-    ensure_vmm_fast_process()
 
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+from ddo_vmm_bootstrap import ensure_vmm_fast_process
+
+if __name__ == "__main__" and not any(flag in sys.argv[1:] for flag in ("--help", "-h")):
+    ensure_vmm_fast_process()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
@@ -61,12 +69,14 @@ NEGATIVE_PROMPT = ""
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
 
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    add_image_attention_arguments(parser)
     add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
     from scripts.helpers.runner_controls import add_minimal_vmm_arguments
@@ -290,6 +300,7 @@ def main():
 
     event_t0 = time.time()
     patched_attention_processors = apply_native_attention_backend(transformer)
+    configure_image_attention(transformer, args, run_metrics)
     record_event("set_transformer_attention_backend", time.time() - event_t0, patched_processors=patched_attention_processors)
 
     event_t0 = time.time()
@@ -330,7 +341,7 @@ def main():
     denoise_callback.start_time = time.perf_counter()
     denoise_callback.last_time = denoise_callback.start_time
     event_t0 = time.time()
-    with transformer_result.profile_run() as ddo_profile_report, attention_backend(AttentionBackendName.NATIVE):
+    with tracker.subphase("denoise"), transformer_result.profile_run() as ddo_profile_report, attention_backend(AttentionBackendName.NATIVE):
         denoise_state = denoise_pipe(
             latents=prepare_state["latents"],
             timesteps=prepare_state["timesteps"],
@@ -375,7 +386,8 @@ def main():
         print(f"  DDO profile calibration complete: {ddo_profile_report}")
         return
 
-    t0 = tracker.step_start("Pass 2: Decode VAE")
+    vae_phase_start = time.time()
+    t0 = tracker.step_start("Load VAE for decode")
     event_t0 = time.time()
     vae = AutoencoderKLLTX2Video.from_pretrained(
         MODEL_PATH,
@@ -384,6 +396,9 @@ def main():
         low_cpu_mem_usage=True,
     ).to(DEVICE)
     record_event("load_vae_to_cuda", time.time() - event_t0)
+
+    tracker.step_end("Load VAE for decode", t0)
+    t0 = tracker.step_start("Decode VAE")
 
     decode_pipe = LTX2ImageDistilledBlocks().sub_blocks["decode"].init_pipeline()
     decode_pipe.update_components(vae=vae)
@@ -401,9 +416,13 @@ def main():
         output="images",
     )[0]
     record_event("vae_decode_modular_call", time.time() - event_t0)
+    tracker.step_end("Decode VAE", t0)
+    t0 = tracker.step_start("Cleanup VAE")
     del decode_pipe, vae, image_latent
     cleanup(record_event, "cleanup_after_vae_decode")
-    tracker.step_end("Pass 2: Decode VAE", t0)
+    tracker.step_end("Cleanup VAE", t0)
+    record_event("Pass 2: Decode VAE", time.time() - vae_phase_start,
+                 scope="aggregate_wall_time_not_an_additional_phase")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / f"ddo_minimal_{WIDTH}x{HEIGHT}_steps{STEPS}_seed{SEED}.png"

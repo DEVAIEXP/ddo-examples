@@ -12,10 +12,19 @@ import math
 import os
 from pathlib import Path
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, minimal_vmm_config
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
@@ -137,7 +146,7 @@ def main():
                           "phases": ["text_encoder", "connectors", "video_encoder", "audio_encoder",
                                      "prepare", "denoise", "trim", "decode"]}, indent=2))
         return
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     os.environ.setdefault("HF_MODULES_CACHE", str(ROOT / ".hf_modules_modular_video"))
     import torch
     from diffusers import ModularPipelineBlocks
@@ -321,7 +330,10 @@ def main():
         with result.cleanup_on_error(), video_self_attention(transformer, args.video_self_attention, metrics):
             run_stage(pipe, state, device, retain={"latents", "audio_latents"})
             torch.cuda.synchronize(device)
-            finish_phase("denoise", start, pipe)
+            tracker.step_end("denoise", start)
+            metrics["denoise_phase_scope"] = "sampling_loop_including_weight_transfers_excluding_transformer_cleanup"
+            cleanup_start = tracker.step_start("cleanup_transformer")
+            finish_phase("cleanup_transformer", cleanup_start, pipe)
         del result, transformer, scheduler
         pipe = None
         keep = {"latents", "audio_latents", "base_token_count", "audio_ref_num_tokens", "audio_num_frames",
@@ -332,7 +344,7 @@ def main():
         run_stage(load_phase(stages["trim"], phase_device="cpu"), state, "cpu")
 
         # 7. Match the VMM decode contract; transformer offload is independent.
-        start = tracker.step_start("decode_and_save")
+        decode_and_save_start = time.time()
         decoded = {}
         decoder_stages = [("video", stages["decode"].sub_blocks["video"], ["vae"]),
                           ("audio", stages["decode"].sub_blocks["audio"], ["audio_vae", "vocoder"])]
@@ -345,6 +357,7 @@ def main():
                                    "planned_stages": [name for name, _, _ in decoder_stages],
                                    "completed_stages": []}
         for name, decoder_block, component_names in decoder_stages:
+            load_start = tracker.step_start("load_decode_" + name)
             pipe = load_phase(decoder_block, component_names, phase_device=args.decode_device)
             if name == "video":
                 pipe.vae.enable_tiling()
@@ -352,18 +365,23 @@ def main():
             elif name == "audio":
                 audio_rate = pipe.vocoder.config.output_sampling_rate
             pipe.to(args.decode_device)
+            tracker.step_end("load_decode_" + name, load_start)
             state["output_type"] = "pil"
             input_device = "cpu" if args.stream_video_decode and name == "video" else args.decode_device
+            decode_start = tracker.step_start("decode_" + name)
             run_stage(pipe, state, input_device)
+            tracker.step_end("decode_" + name, decode_start)
             if name != "audio_mel":
                 decoded[name] = state.pop("videos" if name == "video" else "audio")
             if args.stream_video_decode and name == "audio":
                 state.pop("generated_mel_spectrograms", None)
+            cleanup_start = tracker.step_start("cleanup_decode_" + name)
             pipe.unload_components(component_names)
             metrics["decode_route"]["completed_stages"].append(name)
             pipe = None
             gc.collect()
             torch.cuda.empty_cache()
+            tracker.step_end("cleanup_decode_" + name, cleanup_start)
         video, audio = decoded["video"][0], decoded["audio"][0].float().cpu()
         if len(video) != frames or any(frame.size != (args.width, args.height) for frame in video):
             raise RuntimeError("Decoded frame count/resolution mismatch")
@@ -371,8 +389,11 @@ def main():
             raise RuntimeError("Decoded audio is empty or non-finite")
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"ltx23_modular_{args.width}x{args.height}_{args.seconds}s_seed{args.seed}.mp4"
+        save_start = tracker.step_start("save_video")
         encode_video(video, fps=args.frame_rate, output_path=str(output_path), audio=audio, audio_sample_rate=audio_rate)
-        tracker.step_end("decode_and_save", start)
+        tracker.step_end("save_video", save_start)
+        tracker.record_event("decode_and_save", time.time() - decode_and_save_start,
+                             scope="aggregate_wall_time_not_an_additional_phase")
         metrics.update(status="completed", output_path=str(output_path))
         purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
         print(f"Saved: {output_path}")

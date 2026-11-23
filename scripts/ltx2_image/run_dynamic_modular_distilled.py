@@ -12,15 +12,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
 from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from scripts.helpers.ltx2.image_custom_blocks import load_custom_blocks
-from scripts.helpers.inference_utils import RunTracker, flush
+from scripts.helpers.inference_utils import RunTracker, flush, get_ram_rss_gb
 
 RUNNING_ON_WSL = False
 DEVICE = "cuda:0"
@@ -93,6 +100,7 @@ def parse_optional_float(value: str | None) -> float | None:
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 
 def parse_args(*, official_leaf=False):
     from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
@@ -100,8 +108,11 @@ def parse_args(*, official_leaf=False):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
+    parser.add_argument("--local-files-only", action=argparse.BooleanOptionalAction, default=False)
     if not official_leaf:
         parser.add_argument("--ddo-preset", dest="preset", default="auto")
+        parser.add_argument("--warm-process-reuse", action="store_true",
+                            help="Benchmark two transformer preparations and two generations; decode only the last latent.")
     parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--prompt", default=prompt)
     parser.add_argument("--negative-prompt", default=negative_prompt)
@@ -135,13 +146,29 @@ def parse_args(*, official_leaf=False):
         parser.add_argument("--text-encoder-group-offload", action=argparse.BooleanOptionalAction, default=None)
         parser.add_argument("--text-encoder-dynamic-offload", action=argparse.BooleanOptionalAction, default=None)
     add_lora_arguments(parser)
+    add_image_attention_arguments(parser)
+    if official_leaf:
+        from diffusers_dynamic_offloader import add_dynamic_offload_lifecycle_arguments
+
+        add_dynamic_offload_lifecycle_arguments(parser, phases=("before_run", "before_transformer"))
+        parser.set_defaults(purge_before_run=False, purge_before_transformer=False)
+    parser.add_argument("--vae-leaf-offload", action="store_true",
+                        help="Use official Diffusers leaf offload for the VAE.")
     if official_leaf:
         parser.add_argument("--memory-monitor", choices=("rss", "full"), default="rss")
         parser.add_argument("--no-stream-offload", action="store_true")
         parser.set_defaults(output_dir="outputs/ltx23_image_diffusers_leaf")
         args = parser.parse_args()
     else:
+        parser.add_argument("--purge-before-vae", action="store_true",
+                            help="Purge the Windows standby cache after transformer cleanup and before VAE load.")
         args = parse_common_arguments(parser, canonical_image=True, workload_profiles=True)
+        if args.warm_process_reuse:
+            if args.ddo_backend != "linear" or args.ddo_preset != "warm_process" or args.build_ddo_profile:
+                parser.error("--warm-process-reuse requires linear/warm_process inference, not profile calibration")
+            args.generation_repeats = args.transformer_prepare_repeats = 2
+        if args.purge_before_vae and args.build_ddo_profile:
+            parser.error("--purge-before-vae requires an inference run with VAE decode")
     validate_lora_arguments(parser, args)
     return args
 
@@ -418,9 +445,9 @@ def main(*, official_leaf=False):
     step_start = tracker.step_start
     step_end = tracker.step_end
 
-    def purge(*purge_args, **kwargs):
-        if not official_leaf:
-            return purge_for_runner(*purge_args, **kwargs)
+    def purge(args, settings, phase, **kwargs):
+        if not official_leaf or getattr(args, "purge_" + phase, False):
+            return purge_for_runner(args, settings, phase, **kwargs)
 
     def attach_leaf(module, low_cpu_mem_usage, event_name):
         from diffusers.hooks.group_offloading import apply_group_offloading
@@ -451,6 +478,7 @@ def main(*, official_leaf=False):
             subfolder="text_encoder",
             torch_dtype=DTYPE,
             low_cpu_mem_usage=TEXT_ENCODER_LOW_CPU_MEM_USAGE,
+            local_files_only=args.local_files_only,
         )
         record_event("load_text_encoder", time.time() - event_t0, source=MODEL_PATH)
 
@@ -475,7 +503,9 @@ def main(*, official_leaf=False):
             run_metrics["text_encoder_offload_route"] = text_encoder_offload.route
 
         event_t0 = time.time()
-        tokenizer = GemmaTokenizerFast.from_pretrained(MODEL_PATH, subfolder="tokenizer")
+        tokenizer = GemmaTokenizerFast.from_pretrained(
+            MODEL_PATH, subfolder="tokenizer", local_files_only=args.local_files_only,
+        )
         record_event("load_tokenizer", time.time() - event_t0, source=MODEL_PATH)
 
         event_t0 = time.time()
@@ -523,6 +553,7 @@ def main(*, official_leaf=False):
         subfolder="connectors",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
+        local_files_only=args.local_files_only,
     ).to(DEVICE)
     record_event("load_connectors_to_cuda", time.time() - event_t0, source=MODEL_PATH)
 
@@ -572,6 +603,7 @@ def main(*, official_leaf=False):
             "subfolder": "transformer",
             "torch_dtype": DTYPE,
             "low_cpu_mem_usage": MODEL_LOW_CPU_MEM_USAGE,
+            "local_files_only": args.local_files_only,
         }
 
         run_metrics[f"purge_windows_standby_before_transformer_{repeat_index + 1}"] = (
@@ -594,6 +626,7 @@ def main(*, official_leaf=False):
                 dynamic_offload_config=dynamic_offload_config, apply_dynamic=False, **transformer_load_kwargs,
             )
             prepared_transformer = transformer_load.module
+        configure_image_attention(prepared_transformer, args, run_metrics)
         load_ltx_lora(prepared_transformer, args, run_metrics, record_event)
         record_event(
             transformer_prepare_event_name("load_transformer", repeat_index),
@@ -660,10 +693,14 @@ def main(*, official_leaf=False):
                 remove_dynamic_offload(transformer)
             del transformer
             dynamic_offload_hook = None
+            # The result owns the model too; release it before collecting and reloading.
+            transformer_offload = None
             cleanup_runtime_state(record_event, transformer_prepare_event_name("cleanup_after_transformer_prepare", prepare_repeat_index))
 
     event_t0 = time.time()
-    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+        MODEL_PATH, subfolder="scheduler", local_files_only=args.local_files_only,
+    )
     record_event("load_scheduler", time.time() - event_t0, source=MODEL_PATH)
 
     event_t0 = time.time()
@@ -683,6 +720,7 @@ def main(*, official_leaf=False):
     run_metrics["denoise_step_times_by_repeat"] = []
 
     for repeat_index in range(GENERATION_REPEATS):
+        generation_t0 = time.time()
         repeat_suffix = "" if GENERATION_REPEATS == 1 else f"_repeat_{repeat_index + 1}"
         if GENERATION_REPEATS > 1:
             print(f"  Warm generation repeat {repeat_index + 1}/{GENERATION_REPEATS}", flush=True)
@@ -705,7 +743,7 @@ def main(*, official_leaf=False):
         denoise_progress_callback.step_times = []
         print(f"  Starting denoise loop{repeat_suffix}", flush=True)
         event_t0 = time.time()
-        with (nullcontext() if official_leaf else transformer_offload.profile_run()) as ddo_profile_report:
+        with tracker.subphase(f"denoise{repeat_suffix}"), (nullcontext() if official_leaf else transformer_offload.profile_run()) as ddo_profile_report:
             denoise_state = denoise_pipe(
                 latents=prepare_state["latents"],
                 timesteps=prepare_state["timesteps"],
@@ -737,6 +775,9 @@ def main(*, official_leaf=False):
         if image_latent is not None:
             del image_latent
         image_latent = denoise_state.to(OFFLOAD_DEVICE)
+        if GENERATION_REPEATS > 1:
+            record_event(f"prepare_through_cpu_readback{repeat_suffix}", time.time() - generation_t0,
+                         repeat_index=repeat_index)
         latent_height = prepare_state["latent_height"]
         latent_width = prepare_state["latent_width"]
         latent_channels = prepare_state["in_channels"]
@@ -757,6 +798,10 @@ def main(*, official_leaf=False):
         remove_dynamic_offload(transformer)
         dynamic_offload_hook = None
     del prepare_pipe, denoise_pipe, transformer, scheduler
+    transformer_offload = None
+    vae_purge = getattr(args, "purge_before_vae", False)
+    if vae_purge:
+        run_metrics["pre_vae_rss_gib"] = {"before_cleanup": get_ram_rss_gb()}
     cleanup_before_vae_decode(record_event)
     step_end(f"Pass 1: Generate at {WIDTH}x{HEIGHT}", t0)
 
@@ -772,7 +817,16 @@ def main(*, official_leaf=False):
         print(f"  DDO profile calibration complete: {ddo_profile_report}")
         return
 
-    t0 = step_start("Pass 2: Decode VAE")
+    if vae_purge:
+        rss = run_metrics["pre_vae_rss_gib"]
+        rss["after_cleanup"] = get_ram_rss_gb()
+        run_metrics["purge_windows_standby_before_vae"] = purge(
+            args, DYNAMIC_OFFLOAD_SETTINGS, "before_vae", record_event=record_event,
+        )
+        rss["after_purge"] = get_ram_rss_gb()
+
+    vae_phase_start = time.time()
+    t0 = step_start("Load VAE for decode")
 
     event_t0 = time.time()
     vae = AutoencoderKLLTX2Video.from_pretrained(
@@ -780,8 +834,21 @@ def main(*, official_leaf=False):
         subfolder="vae",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
-    ).to(DEVICE)
-    record_event("load_vae_to_cuda", time.time() - event_t0, source=MODEL_PATH)
+        local_files_only=args.local_files_only,
+    )
+    if args.vae_leaf_offload:
+        from diffusers.hooks.group_offloading import apply_group_offloading
+
+        apply_group_offloading(vae, onload_device=torch.device(DEVICE), offload_device=torch.device("cpu"),
+                               offload_type="leaf_level", use_stream=False)
+    else:
+        vae.to(DEVICE)
+    run_metrics["vae_decode_route"] = "diffusers_leaf" if args.vae_leaf_offload else "resident"
+    record_event("load_vae_for_decode" if args.vae_leaf_offload else "load_vae_to_cuda",
+                 time.time() - event_t0, source=MODEL_PATH, route=run_metrics["vae_decode_route"])
+
+    step_end("Load VAE for decode", t0)
+    t0 = step_start("Decode VAE")
 
     event_t0 = time.time()
     decode_pipe = LTX2ImageDistilledBlocks().sub_blocks["decode"].init_pipeline()
@@ -800,9 +867,13 @@ def main(*, official_leaf=False):
     )[0]
     record_event("vae_decode_modular_call", time.time() - event_t0)
 
+    step_end("Decode VAE", t0)
+    t0 = step_start("Cleanup VAE")
     del decode_pipe, vae, image_latent
     cleanup_runtime_state(record_event, "cleanup_after_vae_decode")
-    step_end("Pass 2: Decode VAE", t0)
+    step_end("Cleanup VAE", t0)
+    record_event("Pass 2: Decode VAE", time.time() - vae_phase_start,
+                 scope="aggregate_wall_time_not_an_additional_phase")
 
     t0 = step_start("Save Image")
     output_dir.mkdir(parents=True, exist_ok=True)

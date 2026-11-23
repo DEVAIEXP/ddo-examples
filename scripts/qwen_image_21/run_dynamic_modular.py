@@ -9,13 +9,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging, quiet_qwen_processor_doc_notices
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 
 def parse_args(argv=None):
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
     parser = argparse.ArgumentParser(description=__doc__)
+    add_image_attention_arguments(parser, qwen=True)
     parser.add_argument("--ddo-preset", default="auto")
     parser.add_argument(
         "--text-encoder-preset",
@@ -112,7 +122,8 @@ def main():
         remove_dynamic_offload,
     )
     from huggingface_hub import snapshot_download
-    from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+    with quiet_qwen_processor_doc_notices():
+        from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
     from scripts.helpers.inference_utils import flush
     from scripts.helpers.runner_reporting import RunnerReporting
@@ -169,6 +180,7 @@ def main():
                 torch_dtype=dtype,
                 **loading,
             ).eval()
+        with quiet_qwen_processor_doc_notices():
             processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
         with run.phase("attach_text_encoder"):
             text_result = enable_offload(
@@ -207,14 +219,19 @@ def main():
                 **loading,
             ).eval()
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model, subfolder="scheduler", **loading)
+            configure_image_attention(transformer, args, metrics, qwen=True)
         with run.phase("attach_transformer"):
+            transformer_overrides = overrides.copy()
+            if args.ddo_profile:
+                # Let DDO resolve the named profile when no fixed budget was supplied.
+                transformer_overrides.setdefault("resident_module_budget_gb", 0.0)
             result = enable_offload(
                 transformer,
                 component="transformer",
                 preset=args.ddo_preset,
                 profile_name=args.ddo_profile or "",
                 build_profile=args.build_ddo_profile,
-                **overrides,
+                **transformer_overrides,
                 execution_device=device,
                 use_environment=False,
                 record_event=run.tracker.record_event,

@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers import inference_utils
 from scripts.helpers.runner_reporting import RunnerReporting, add_reporting_arguments
 
 
@@ -43,6 +44,31 @@ def arguments(tmp_path):
     args.output_dir = tmp_path
     args.show_metrics = False
     return args
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_driver_report_precedes_tracker_clock(monkeypatch, capsys, available):
+    clock = [1]
+
+    def query(*args, **kwargs):
+        clock[0] += 3
+        if not available:
+            raise FileNotFoundError("nvidia-smi")
+        return SimpleNamespace(stdout="0, 617.42\n1, [N/A]\n")
+
+    monkeypatch.setattr(inference_utils.subprocess, "run", query)
+    monkeypatch.setattr(inference_utils, "time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(inference_utils.torch.cuda, "init", lambda: None)
+    monkeypatch.setattr(inference_utils, "get_gpu_used_gb", lambda device: 0)
+    metrics = {}
+    tracker = inference_utils.RunTracker("cuda:0", metrics, show_metrics=False)
+    clock[0] += 2
+
+    assert tracker.total_elapsed() == 2
+    assert metrics["nvidia_driver_versions"] == (
+        [{"nvidia_smi_index": "0", "driver_version": "617.42"}] if available else None
+    )
+    assert ("GPU 0 617.42" if available else "unavailable") in capsys.readouterr().out
 
 
 def test_reporting_defaults_are_opt_in_for_cuda_and_purge(tmp_path):

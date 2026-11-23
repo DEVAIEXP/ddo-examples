@@ -17,8 +17,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
@@ -70,12 +77,14 @@ DEFAULT_NEGATIVE_PROMPT = (
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
 
     parser = argparse.ArgumentParser(description="LTX 2.3 distilled modular SDNQ text-to-image DDO runner.", allow_abbrev=False)
+    add_image_attention_arguments(parser)
     add_custom_blocks_arguments(parser)
     parser.add_argument("--bits", type=int, choices=(4, 8), default=4, help="SDNQ transformer bit depth.")
     parser.add_argument(
@@ -100,6 +109,9 @@ def parse_args():
     parser.add_argument("--pag-layers", default="28")
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_sdnq_distilled")
     parser.add_argument("--model-path", default=MODEL_PATH)
+    parser.add_argument("--sdnq-model-path", help="Saved SDNQ transformer root; defaults to the selected bit-depth repository.")
+    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--validate-ddo-profile", action="store_true", help="Validate a pending SDNQ capacity probe and stop before decode.")
     parser.add_argument("--ddo-preset", dest="preset", default="auto", choices=(
         "auto", "one_shot_fast", "low_ram_safe", "wsl_compat", "warm_process",
         "diffusers_leaf_offload_compat",
@@ -127,7 +139,11 @@ def parse_args():
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show-denoise-steps", action=argparse.BooleanOptionalAction, default=SHOW_DENOISE_STEPS)
     add_lora_arguments(parser)
-    args = parse_common_arguments(parser, canonical_image=True)
+    args = parse_common_arguments(parser, canonical_image=True, workload_profiles=True)
+    if args.validate_ddo_profile and (not args.ddo_profile or args.build_ddo_profile):
+        parser.error("--validate-ddo-profile requires --ddo-profile and excludes --build-ddo-profile.")
+    if args.ddo_profile and args.preset == "diffusers_leaf_offload_compat":
+        parser.error("The Leaf control does not use a DDO capacity profile.")
     validate_lora_arguments(parser, args)
     return args
 
@@ -217,7 +233,8 @@ def main():
     MODEL_PATH = args.model_path
     LOW_CPU_MEM_USAGE = args.low_cpu_mem_usage
     TEXT_ENCODER_LOW_CPU_MEM_USAGE = args.text_encoder_low_cpu_mem_usage
-    active_inference_steps = max(1, min(args.steps, args.ddo_profile_steps)) if args.build_ddo_profile else args.steps
+    profile_only = args.build_ddo_profile or args.validate_ddo_profile
+    active_inference_steps = max(1, min(args.steps, args.ddo_profile_steps)) if profile_only else args.steps
     SHOW_METRICS = args.show_metrics if args.show_metrics is not None else args.metrics_level >= 1
     SAVE_METRICS = args.save_metrics if args.save_metrics is not None else args.metrics_level >= 2
     SHOW_DENOISE_STEPS = args.show_denoise_steps
@@ -246,7 +263,7 @@ def main():
     ddo_config = replace(ddo_settings.config, execution_mode="plan" if leaf_control else "sdnq_runtime")
     ddo_settings = replace(ddo_settings, config=ddo_config, enabled=True, plan=leaf_control)
 
-    sdnq_model_path = SDNQ_MODEL_PATHS[args.bits]
+    sdnq_model_path = args.sdnq_model_path or SDNQ_MODEL_PATHS[args.bits]
     text_encoder_src = sdnq_model_path if args.text_encoder_bits is not None else MODEL_PATH
     text_encoder_kind = f"sdnq{args.text_encoder_bits}" if args.text_encoder_bits is not None else "original"
     transformer_kind = f"sdnq{args.bits}"
@@ -282,6 +299,7 @@ def main():
         "active_inference_steps": active_inference_steps,
         "ddo_profile_name": args.ddo_profile,
         "build_ddo_profile": args.build_ddo_profile,
+        "validate_ddo_profile": args.validate_ddo_profile,
         "ddo_preset": args.preset,
         "metrics_level": args.metrics_level,
         "pre_vae_cleanup_repeats": max(1, args.pre_vae_cleanup_repeats),
@@ -297,6 +315,7 @@ def main():
         "lora_adapters": [],
         "dtype": str(DTYPE),
         "offload_backend": "diffusers_leaf" if leaf_control else "ddo_sdnq_runtime",
+        "vae_decode_route": "resident",
         "group_offload_config": GROUP_OFFLOAD_CONFIG.copy(),
         "events": [],
         "steps": [],
@@ -326,6 +345,7 @@ def main():
         subfolder="text_encoder",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=TEXT_ENCODER_LOW_CPU_MEM_USAGE,
+        local_files_only=args.local_files_only,
     )
     record_event("load_text_encoder", time.time() - event_t0, source=text_encoder_src, kind=text_encoder_kind)
 
@@ -338,7 +358,7 @@ def main():
         record_event("setup_text_encoder_onload", time.time() - event_t0)
 
     event_t0 = time.time()
-    tokenizer = GemmaTokenizerFast.from_pretrained(MODEL_PATH, subfolder="tokenizer")
+    tokenizer = GemmaTokenizerFast.from_pretrained(MODEL_PATH, subfolder="tokenizer", local_files_only=args.local_files_only)
     record_event("load_tokenizer", time.time() - event_t0, source=MODEL_PATH)
 
     event_t0 = time.time()
@@ -390,6 +410,7 @@ def main():
         subfolder="connectors",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=LOW_CPU_MEM_USAGE,
+        local_files_only=args.local_files_only,
     ).to(DEVICE)
     record_event("load_connectors_to_cuda", time.time() - event_t0, source=MODEL_PATH)
 
@@ -440,12 +461,14 @@ def main():
         "subfolder": "transformer",
         "torch_dtype": prompt_dtype,
         "low_cpu_mem_usage": LOW_CPU_MEM_USAGE,
+        "local_files_only": args.local_files_only,
     }
     if LOW_CPU_MEM_USAGE:
         transformer_load_kwargs["device_map"] = "cpu"
 
     event_t0 = time.time()
     transformer = LTX2ImageTransformer2DModel.from_pretrained(sdnq_model_path, **transformer_load_kwargs)
+    configure_image_attention(transformer, args, run_metrics)
     load_ltx_lora(transformer, args, run_metrics, record_event)
     record_event("load_sdnq_transformer", time.time() - event_t0, source=sdnq_model_path, kind=transformer_kind)
 
@@ -479,7 +502,7 @@ def main():
         )
 
     event_t0 = time.time()
-    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler")
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(MODEL_PATH, subfolder="scheduler", local_files_only=args.local_files_only)
     record_event("load_scheduler", time.time() - event_t0, source=MODEL_PATH)
 
     event_t0 = time.time()
@@ -511,7 +534,7 @@ def main():
     run_metrics["denoise_step_times"] = denoise_progress_callback.step_times
     print("  Starting denoise loop", flush=True)
     event_t0 = time.time()
-    with transformer_offload.profile_run() as ddo_profile_report:
+    with tracker.subphase("denoise"), transformer_offload.profile_run() as ddo_profile_report:
         denoise_state = denoise_pipe(
         latents=prepare_state["latents"],
         timesteps=prepare_state["timesteps"],
@@ -542,9 +565,14 @@ def main():
         print(f"  Image latent: {image_latent.shape}", flush=True)
 
     run_metrics["ddo_profile"] = ddo_profile_report
+    if profile_only:
+        kind = ddo_profile_report.get("profile_measurement_kind")
+        ddo_profile_report["build_stage"] = "probe_pending" if kind == "sdnq_baseline_probe_pending" else "final"
+    tracker.record_ddo_metrics(transformer_offload.metrics_snapshot(), "transformer")
     remove_dynamic_offload(transformer)
     del prepare_state, denoise_state, connector_prompt_embeds, connector_attention_mask
     del prepare_pipe, denoise_pipe, transformer, scheduler
+    transformer_offload = None
     cleanup_runtime_state(
         record_event,
         "cleanup_before_vae_decode",
@@ -552,15 +580,27 @@ def main():
     )
     tracker.step_end(f"Pass 1: Generate at {args.width}x{args.height}", t0)
 
-    t0 = tracker.step_start("Pass 2: Decode VAE")
+    if profile_only:
+        run_metrics["total_elapsed_sec"] = round(tracker.total_elapsed(), 4)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(json.dumps(run_metrics, indent=2), encoding="utf-8")
+        print(f"  Metrics JSON: {metrics_path}", flush=True)
+        return
+
+    vae_phase_start = time.time()
+    t0 = tracker.step_start("Load VAE for decode")
     event_t0 = time.time()
     vae = AutoencoderKLLTX2Video.from_pretrained(
         MODEL_PATH,
         subfolder="vae",
         torch_dtype=DTYPE,
         low_cpu_mem_usage=LOW_CPU_MEM_USAGE,
+        local_files_only=args.local_files_only,
     ).to(DEVICE)
     record_event("load_vae_to_cuda", time.time() - event_t0, source=MODEL_PATH)
+
+    tracker.step_end("Load VAE for decode", t0)
+    t0 = tracker.step_start("Decode VAE")
 
     event_t0 = time.time()
     decode_pipe = LTX2ImageDistilledBlocks().sub_blocks["decode"].init_pipeline()
@@ -579,9 +619,13 @@ def main():
     )[0]
     record_event("vae_decode_modular_call", time.time() - event_t0)
 
+    tracker.step_end("Decode VAE", t0)
+    t0 = tracker.step_start("Cleanup VAE")
     del decode_pipe, vae, image_latent
     cleanup_runtime_state(record_event, "cleanup_after_vae_decode")
-    tracker.step_end("Pass 2: Decode VAE", t0)
+    tracker.step_end("Cleanup VAE", t0)
+    record_event("Pass 2: Decode VAE", time.time() - vae_phase_start,
+                 scope="aggregate_wall_time_not_an_additional_phase")
 
     t0 = tracker.step_start("Save Image")
     output_dir.mkdir(parents=True, exist_ok=True)

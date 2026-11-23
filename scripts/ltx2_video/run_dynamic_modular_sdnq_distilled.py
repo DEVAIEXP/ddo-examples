@@ -19,6 +19,10 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
 SDNQ_MODELS = {
     4: "OzzyGT/LTX-2.3-Distilled-1.1-sdnq-dynamic-int4",
     8: "OzzyGT/LTX-2.3-Distilled-1.1-sdnq-dynamic-int8",
@@ -46,6 +50,10 @@ def sdnq_settings(args, device):
                    config=replace(settings.config, execution_mode="sdnq_runtime"))
 
 
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
+
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
@@ -67,6 +75,8 @@ def parse_args(argv=None):
     parser.add_argument("--reuse-rotary-embeddings", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--ddo-profile", help="Named transformer workload profile.")
     parser.add_argument("--build-ddo-profile", action="store_true")
+    parser.add_argument("--validate-ddo-profile", action="store_true",
+                        help="Validate the pending SDNQ profile using two steps without decode.")
     parser.add_argument("--custom-blocks", default="elismasilva/ltx2.3_video_custom_blocks")
     parser.add_argument("--custom-blocks-revision")
     parser.add_argument("--local-files-only", action=argparse.BooleanOptionalAction, default=False)
@@ -94,7 +104,14 @@ def parse_args(argv=None):
     parser.add_argument("--dry-run", action="store_true")
     add_lora_arguments(parser)
     add_video_self_attention_argument(parser)
-    args = parse_common_arguments(parser, argv, canonical_video=True)
+    args = parse_common_arguments(parser, argv, canonical_video=True, workload_profiles=True)
+    for phase in ("before_run", "after_text_encoder", "before_transformer", "after_run"):
+        if getattr(args, "purge_" + phase) is None:
+            setattr(args, "purge_" + phase, False)
+    if args.validate_ddo_profile and (not args.ddo_profile or args.build_ddo_profile):
+        parser.error("--validate-ddo-profile requires --ddo-profile and excludes --build-ddo-profile.")
+    if args.ddo_profile and args.ddo_preset == "diffusers_leaf_offload_compat":
+        parser.error("The Leaf control does not use a DDO capacity profile.")
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
@@ -110,6 +127,15 @@ def parse_args(argv=None):
     if args.build_ddo_profile and not args.ddo_profile:
         parser.error("--build-ddo-profile requires --ddo-profile NAME.")
     return args
+
+
+def prepare_profile_steps(state, args):
+    """Keep the prepared distilled schedule and truncate only its execution prefix."""
+    count = min(2, args.steps) if args.build_ddo_profile or args.validate_ddo_profile else args.steps
+    if len(state["timesteps"]) != args.steps:
+        raise RuntimeError("The prepared distilled schedule has an unexpected length.")
+    state["timesteps"] = state["timesteps"][:count]
+    return count
 
 
 def move_tensors(value, device):
@@ -176,7 +202,7 @@ def main():
                           "phases": ["text_encoder", "connectors", "video_encoder", "audio_encoder",
                                      "prepare", "denoise", "trim", "decode"]}, indent=2))
         return
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     os.environ.setdefault("HF_MODULES_CACHE", str(ROOT / ".hf_modules_modular_video"))
     import torch
     import sdnq  # Register Diffusers/Transformers quantizers before loading weights.
@@ -218,6 +244,12 @@ def main():
                "sdnq_version": version("sdnq"), "bits": args.bits,
                "transformer_source": transformer_source(args),
                "auxiliary_source": args.distilled_model}
+    profile_only = args.build_ddo_profile or args.validate_ddo_profile
+    metrics["workload"] = {"width": args.width, "height": args.height, "frames": frames,
+                           "seconds": args.seconds, "frame_rate": args.frame_rate,
+                           "steps_requested": args.steps, "seed": args.seed, "prompt": args.prompt,
+                           "dtype": "bfloat16", "guidance_scale": 1.0, "guidance_rescale": 0.7,
+                           "audio_guidance_scale": 1.0}
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
     active = []
     pipe = None
@@ -229,6 +261,10 @@ def main():
                  use_cross_timestep=True, seed=args.seed)
     ffmpeg_bin = os.getenv("DDO_RUNNER_FFMPEG_BIN", "")
     dll_directory = os.add_dll_directory(ffmpeg_bin) if os.name == "nt" and os.path.isdir(ffmpeg_bin) else None
+
+    def purge(phase):
+        metrics.setdefault("standby_purges", {})[phase] = purge_for_runner(
+            args, settings, phase, record_event=tracker.record_event)
 
     def load_phase(block, names=(), phase_device=device):
         phase = phase_pipeline(block, phase_device, args.distilled_model, args.local_files_only)
@@ -269,7 +305,7 @@ def main():
         torch.cuda.empty_cache()
 
     try:
-        purge_for_runner(args, settings, "before_run", record_event=tracker.record_event)
+        purge("before_run")
         # 2. Encode text, then release encoder weights before loading connectors.
         start = tracker.step_start("text_encoder")
         pipe = load_phase(stages["text_encoder"])
@@ -283,7 +319,7 @@ def main():
         run_stage(pipe, state, device)
         finish_phase("text_encoder", start, pipe)
         pipe = None
-        purge_for_runner(args, settings, "after_text_encoder", record_event=tracker.record_event)
+        purge("after_text_encoder")
 
         # 3. Connect text embeddings to the video/audio transformer inputs.
         start = tracker.step_start("connectors")
@@ -339,10 +375,18 @@ def main():
         if not backend.get("sdnq_module_count"):
             raise RuntimeError("The transformer did not load SDNQ modules; refusing a dense fallback.")
         metrics["quantized_backend"] = backend
+        metrics["quantization_recipe"] = dict(transformer.config.quantization_config)
+        metrics["model_features"] = {
+            "phase_modulation": any(block.phase_modulation for block in transformer.transformer_blocks),
+            "inplace_residuals": any(block.inplace_residuals for block in transformer.transformer_blocks),
+            "compact_timesteps": False, "feed_forward_chunk_size": 0, "normalization_chunk_size": 0,
+            "reuse_rotary_embeddings": args.reuse_rotary_embeddings}
         pipe = load_phase(stages["prepare"], ["vae", "audio_vae", "scheduler"])
         pipe.update_components(transformer=transformer)
         run_stage(pipe, state, device)
         scheduler = pipe.scheduler
+        active_steps = prepare_profile_steps(state, args)
+        metrics["active_inference_steps"] = active_steps
         if args.reuse_rotary_embeddings:
             rotary_pipe = phase_pipeline(exports.LTX2VideoPrepareRotaryStep(), device)
             rotary_pipe.update_components(transformer=transformer)
@@ -362,7 +406,7 @@ def main():
                                audio_guider=exports.LTX2VideoAudioGuidance(guidance_scale=1.0))
         result = attach(transformer, "transformer")
         tracker.step_end("attach_transformer", start)
-        purge_for_runner(args, settings, "before_transformer", record_event=tracker.record_event)
+        purge("before_transformer")
         start = tracker.step_start("denoise")
         # Newline host observations are visible through PowerShell Tee. CUDA
         # events are resolved only after the existing end-of-phase synchronize;
@@ -391,7 +435,7 @@ def main():
                 video_self_attention(transformer, args.video_self_attention, metrics):
             run_stage(pipe, state, device, retain={"latents", "audio_latents"})
             torch.cuda.synchronize(device)
-        if len(step_marks) != args.steps + 1:
+        if len(step_marks) != active_steps + 1:
             raise RuntimeError("Missing denoise callback observations")
         for index, (previous, current) in enumerate(zip(step_marks, step_marks[1:])):
             tracker.record_event(f"denoise_step_{index + 1}_cuda", previous.elapsed_time(current) / 1000,
@@ -399,8 +443,14 @@ def main():
         state.pop("callback_on_step_end", None)
         if profile_report is not None:
             metrics["ddo_profile"] = profile_report
+            if profile_only:
+                profile_report["build_stage"] = ("probe_pending" if profile_report.get(
+                    "profile_measurement_kind") == "sdnq_baseline_probe_pending" else "final")
+        tracker.step_end("denoise", start)
+        metrics["denoise_phase_scope"] = "sampling_loop_including_weight_transfers_excluding_transformer_cleanup"
+        cleanup_start = tracker.step_start("cleanup_transformer")
         with result.cleanup_on_error():
-            finish_phase("denoise", start, pipe)
+            finish_phase("cleanup_transformer", cleanup_start, pipe)
         del result, transformer, scheduler
         pipe = None
         keep = {"latents", "audio_latents", "base_token_count", "audio_ref_num_tokens", "audio_num_frames",
@@ -408,10 +458,13 @@ def main():
         state = {name: value for name, value in state.items() if name in keep}
         gc.collect()
         torch.cuda.empty_cache()
+        if profile_only:
+            metrics["status"] = "completed"
+            return
         run_stage(load_phase(stages["trim"], phase_device="cpu"), state, "cpu")
 
         # 7. Match the VMM decode contract; transformer offload is independent.
-        start = tracker.step_start("decode_and_save")
+        decode_and_save_start = time.time()
         decoded = {}
         decoder_stages = [("video", stages["decode"].sub_blocks["video"], ["vae"]),
                           ("audio", stages["decode"].sub_blocks["audio"], ["audio_vae", "vocoder"])]
@@ -424,6 +477,7 @@ def main():
                                    "planned_stages": [name for name, _, _ in decoder_stages],
                                    "completed_stages": []}
         for name, decoder_block, component_names in decoder_stages:
+            load_start = tracker.step_start("load_decode_" + name)
             pipe = load_phase(decoder_block, component_names, phase_device=args.decode_device)
             if name == "video":
                 pipe.vae.enable_tiling()
@@ -431,30 +485,40 @@ def main():
             elif name == "audio":
                 audio_rate = pipe.vocoder.config.output_sampling_rate
             pipe.to(args.decode_device)
+            tracker.step_end("load_decode_" + name, load_start)
             state["output_type"] = "pil"
             input_device = "cpu" if args.stream_video_decode and name == "video" else args.decode_device
+            decode_start = tracker.step_start("decode_" + name)
             run_stage(pipe, state, input_device)
+            tracker.step_end("decode_" + name, decode_start)
             if name != "audio_mel":
                 decoded[name] = state.pop("videos" if name == "video" else "audio")
             if args.stream_video_decode and name == "audio":
                 state.pop("generated_mel_spectrograms", None)
+            cleanup_start = tracker.step_start("cleanup_decode_" + name)
             pipe.unload_components(component_names)
             metrics["decode_route"]["completed_stages"].append(name)
             pipe = None
             gc.collect()
             torch.cuda.empty_cache()
+            tracker.step_end("cleanup_decode_" + name, cleanup_start)
         video, audio = decoded["video"][0], decoded["audio"][0].float().cpu()
         if len(video) != frames or any(frame.size != (args.width, args.height) for frame in video):
             raise RuntimeError("Decoded frame count/resolution mismatch")
         if audio.numel() == 0 or not bool(torch.isfinite(audio).all()):
             raise RuntimeError("Decoded audio is empty or non-finite")
+        metrics["decoded_media"] = {"frames": len(video), "width": args.width, "height": args.height,
+                                    "audio_finite": True, "audio_samples": audio.numel()}
         output_dir.mkdir(parents=True, exist_ok=True)
         route_tag = "leaf" if transformer_route(args) == "diffusers_group_offload" else "ddo"
         output_path = output_dir / f"ltx23_sdnq_int{args.bits}_{route_tag}_{args.width}x{args.height}_{args.seconds}s_seed{args.seed}.mp4"
+        save_start = tracker.step_start("save_video")
         encode_video(video, fps=args.frame_rate, output_path=str(output_path), audio=audio, audio_sample_rate=audio_rate)
-        tracker.step_end("decode_and_save", start)
+        tracker.step_end("save_video", save_start)
+        tracker.record_event("decode_and_save", time.time() - decode_and_save_start,
+                             scope="aggregate_wall_time_not_an_additional_phase")
         metrics.update(status="completed", output_path=str(output_path))
-        purge_for_runner(args, settings, "after_run", record_event=tracker.record_event)
+        purge("after_run")
         print(f"Saved: {output_path}")
     except BaseException as error:
         metrics.update(status="failed", error=repr(error))

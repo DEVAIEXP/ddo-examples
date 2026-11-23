@@ -1,6 +1,3 @@
-import csv
-import os
-import subprocess
 from time import perf_counter
 from contextlib import contextmanager, nullcontext
 from copy import copy
@@ -90,35 +87,10 @@ def install(model, layers, processor_type, load, *, rotary_pair=None):
             target.set_processor(wrapper.original)
 
 def add_video_self_attention_argument(parser):
-    parser.add_argument('--video-self-attention', choices=('default', 'flash-attn2', 'sol-attn', 'cudnn'),
+    parser.add_argument('--video-self-attention', choices=('default', 'flash-attn2', 'sol-attn', 'cudnn', 'cudnn-only'),
                         default='default', help='Backend for eligible video self-attention only.')
     parser.add_argument('--trace-attention-operators', action='store_true',
                         help='Profile PyTorch attention operators during denoising for diagnostics.')
-
-
-def nvidia_driver_versions():
-    try:
-        result = subprocess.run(
-            ['nvidia-smi', '--query-gpu=index,driver_version', '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, errors='replace', check=True, timeout=3,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    versions = [
-        {'nvidia_smi_index': row[0].strip(), 'driver_version': row[1].strip()}
-        for row in csv.reader(result.stdout.splitlines()) if len(row) == 2 and row[0].strip().isdigit()
-    ]
-    return versions or None
-
-
-def record_nvidia_driver(metrics):
-    drivers = nvidia_driver_versions()
-    metrics.setdefault('attention_environment', {})['nvidia_driver_versions'] = drivers
-    summary = ', '.join(
-        f"GPU {entry['nvidia_smi_index']} {entry['driver_version']}" for entry in drivers or ()
-    )
-    print(f"  [attention] NVIDIA driver: {summary or 'unavailable'}", flush=True)
 
 
 def record_attention_adjusted_total(metrics):
@@ -156,14 +128,17 @@ def video_self_attention(transformer, backend, metrics, *, fused_rotary=False, t
         trace = profile(activities=[ProfilerActivity.CPU])
     else:
         trace = nullcontext()
-    with _configure_video_self_attention(transformer, backend, metrics, fused_rotary=fused_rotary):
+    with _configure_video_self_attention(transformer, backend, metrics, fused_rotary=fused_rotary,
+                                         trace_operators=trace_operators):
         with trace:
             yield
             finalize_start = perf_counter() if trace_operators else None
         if trace_operators:
             operators = {
                 event.key: event.count for event in trace.key_averages()
-                if event.key.startswith('aten::') and 'attention' in event.key
+                if (event.key.startswith('aten::') and 'attention' in event.key)
+                or event.key == 'flash_attn::_flash_attn_forward'
+                or event.key == 'ddo::sol_attn_triton'
             }
             elapsed = perf_counter() - finalize_start
             metrics['attention_environment'].update(
@@ -173,18 +148,21 @@ def video_self_attention(transformer, backend, metrics, *, fused_rotary=False, t
             print(f"  [attention] PyTorch operators observed during denoising: {operators}", flush=True)
 
 
-def cudnn_sdpa(q, k, v):
+def cudnn_sdpa(q, k, v, *, strict=False):
     """PyTorch SDPA with cuDNN attention preferred, for (batch, tokens, heads, dim) inputs.
 
     The priority order is flash, cuDNN, memory-efficient, math. Builds without
     flash attention (for example Windows wheels) therefore select cuDNN when the
     inputs are eligible and otherwise fall back to the remaining PyTorch backends.
+    Strict mode requires cuDNN and propagates unsupported-kernel errors.
     """
     import torch
     from torch.nn.attention import SDPBackend, sdpa_kernel
 
     order = [SDPBackend.FLASH_ATTENTION, SDPBackend.CUDNN_ATTENTION,
              SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]
+    if strict:
+        order = [SDPBackend.CUDNN_ATTENTION]
     q, k, v = (t.transpose(1, 2) for t in (q, k, v))
     with sdpa_kernel(order, set_priority=True):
         out = torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
@@ -192,7 +170,8 @@ def cudnn_sdpa(q, k, v):
 
 
 @contextmanager
-def _configure_video_self_attention(transformer, backend, metrics, *, fused_rotary=False):
+def _configure_video_self_attention(transformer, backend, metrics, *, fused_rotary=False,
+                                    trace_operators=False):
     """Apply the selected backend only to eligible video self-attention."""
     if backend == 'default' and not fused_rotary:
         metrics['video_self_attention'] = {'requested_backend': backend}
@@ -207,10 +186,17 @@ def _configure_video_self_attention(transformer, backend, metrics, *, fused_rota
     def flash(q, k, v):
         return flash_attn_func(q, k, v, dropout_p=0.0, causal=False)
 
+    def cudnn_only(q, k, v):
+        return cudnn_sdpa(q, k, v, strict=True)
+
+    kernels = {'flash-attn2': flash, 'cudnn': cudnn_sdpa, 'cudnn-only': cudnn_only}
     if backend == 'sol-attn':
         import torch
+        from kernels.sol_loader import load_interface
 
-        from sol_attn.interface import get_sol_attn_backend, sol_attn
+        sol_interface = load_interface()
+        get_sol_attn_backend = sol_interface.get_sol_attn_backend
+        sol_attn = sol_interface.sol_attn
 
         if get_sol_attn_backend(0) != 'triton':
             raise RuntimeError('This Sol-Attn option requires the Triton backend')
@@ -220,7 +206,11 @@ def _configure_video_self_attention(transformer, backend, metrics, *, fused_rota
                 raise ValueError(
                     'Sol-Attn video self-attention requires CUDA BF16 BTHD tensors with head dimension 128.'
                 )
-            return sol_attn(*(t.contiguous() for t in (q, k, v)), tau=1.0, thresh_type='diag')
+            marker = torch.profiler.record_function('ddo::sol_attn_triton') if trace_operators else nullcontext()
+            with marker:
+                return sol_attn(*(t.contiguous() for t in (q, k, v)), tau=1.0, thresh_type='diag')
+
+        kernels['sol-attn'] = sparse
 
     execution_ops = None
     if fused_rotary:
@@ -236,7 +226,7 @@ def _configure_video_self_attention(transformer, backend, metrics, *, fused_rota
                 if processor.__name__ not in ('LTX2AudioVideoAttnProcessor', 'LTX2PerturbedAttnProcessor'):
                     raise TypeError(f'Unsupported video attention processor: {processor.__name__}')
                 selected = 'flash-attn2' if backend == 'sol-attn' and index == 0 else backend
-                kernel = sparse if selected == 'sol-attn' else cudnn_sdpa if selected == 'cudnn' else flash
+                kernel = kernels.get(selected)
                 rotary_pair = (
                     execution_ops.rotary_pair
                     if execution_ops is not None and (backend != 'sol-attn' or selected == 'sol-attn')
@@ -256,5 +246,12 @@ def _configure_video_self_attention(transformer, backend, metrics, *, fused_rota
             'layers': [{'index': index, 'backend': selected, 'calls': route.selected,
                         'fallback_calls': route.fallback} for index, selected, route in routes],
         }
+        if backend == 'sol-attn':
+            from pathlib import Path
+
+            metrics['video_self_attention']['sol_policy'] = {
+                'backend': 'triton', 'tau': 1.0, 'thresh_type': 'diag',
+                'interface': str(Path(sol_interface.__file__).resolve()),
+            }
         if execution_ops is not None:
             metrics['video_self_attention']['fused_rotary_pair_submissions'] = execution_ops.rotary_pair_submissions

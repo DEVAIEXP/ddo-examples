@@ -3,13 +3,70 @@ import argparse
 import sys
 import unittest
 from unittest.mock import patch
+from types import ModuleType, SimpleNamespace
+from contextlib import nullcontext
 
 import torch
 
 from scripts.helpers.ltx2 import video_self_attention as vsa
 
 
+def dispatch_attention_fn(*args, **kwargs):
+    raise AssertionError('The CPU Sol fixture must use the selected dispatch override')
+
+
 class VideoSelfAttentionCpu(unittest.TestCase):
+    def test_sol_mixed_routes_and_restoration_without_cuda(self):
+        class LTX2AudioVideoAttnProcessor:
+            _parallel_config = None
+            attention_dispatch_override = None
+
+            def __call__(self, attn, hidden_states, *args):
+                return self.attention_dispatch_override(hidden_states, hidden_states, hidden_states)
+
+        class Attention:
+            def __init__(self):
+                self.processor = LTX2AudioVideoAttnProcessor()
+
+            def set_processor(self, value):
+                self.processor = value
+
+        tensor = SimpleNamespace(ndim=4, shape=(1, 33, 32, 128), dtype=torch.bfloat16,
+                                 device=SimpleNamespace(type='cuda'))
+        tensor.contiguous = lambda: tensor
+        sparse_calls, flash_calls = [], []
+        flash = ModuleType('flash_attn')
+        flash.flash_attn_func = lambda q, k, v, **kw: flash_calls.append(kw) or q
+        package = ModuleType('sol_attn')
+        interface = ModuleType('sol_attn.interface')
+        interface.__file__ = __file__
+        interface.get_sol_attn_backend = lambda device: 'triton'
+        interface.sol_attn = lambda q, k, v, **kw: sparse_calls.append(kw) or q
+        package.interface = interface
+        model = SimpleNamespace(transformer_blocks=[SimpleNamespace(attn1=Attention()) for _ in range(48)])
+        originals = [block.attn1.processor for block in model.transformer_blocks]
+        metrics = {}
+        with patch.dict(sys.modules, {'flash_attn': flash, 'sol_attn': package,
+                                      'sol_attn.interface': interface}), \
+                patch('kernels.sol_loader.load_interface', return_value=interface), \
+                patch.object(torch.cuda, '_lazy_init', side_effect=AssertionError('CUDA prohibited')), \
+                patch.object(torch.profiler, 'record_function', side_effect=lambda name: nullcontext()) as marker:
+            with self.assertRaisesRegex(RuntimeError, 'planned stop'):
+                with vsa._configure_video_self_attention(model, 'sol-attn', metrics, trace_operators=True):
+                    for block in model.transformer_blocks:
+                        for _ in range(8):
+                            self.assertIs(block.attn1.processor(block.attn1, tensor), tensor)
+                    raise RuntimeError('planned stop')
+        self.assertEqual(len(flash_calls), 8)
+        self.assertEqual(len(sparse_calls), 376)
+        self.assertEqual(marker.call_count, 376)
+        self.assertTrue(all(call.args == ('ddo::sol_attn_triton',) for call in marker.call_args_list))
+        self.assertTrue(all(v == {'tau': 1.0, 'thresh_type': 'diag'} for v in sparse_calls))
+        self.assertTrue(all(block.attn1.processor is original
+                            for block, original in zip(model.transformer_blocks, originals)))
+        self.assertEqual(metrics['video_self_attention']['layers'][0]['backend'], 'flash-attn2')
+        self.assertEqual(metrics['video_self_attention']['sol_policy']['backend'], 'triton')
+
     def test_choices_include_cudnn(self):
         parser = argparse.ArgumentParser()
         vsa.add_video_self_attention_argument(parser)

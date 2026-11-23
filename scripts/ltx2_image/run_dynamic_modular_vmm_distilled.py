@@ -20,7 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 os.environ.setdefault("HF_MODULES_CACHE", str((Path(__file__).parent / ".hf_modules").resolve()))
 
 # This is a VMM-only harness: install the native allocator in the relaunched
@@ -29,6 +32,10 @@ from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
 
 if not any(flag in sys.argv[1:] for flag in ("--help", "-h")) and vmm_fast_requested(default_backend="vmm"):
     ensure_vmm_fast_process()
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 import torch
 from diffusers import AutoencoderKLLTX2Video, FlowMatchEulerDiscreteScheduler
@@ -201,12 +208,14 @@ def parse_optional_float(value: str | None) -> float | None:
 
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, backend_reporting_fields, apply_execution_backing_reclaim
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 
 def parse_args():
     from scripts.helpers.ltx2.image_custom_blocks import add_custom_blocks_arguments
 
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    add_image_attention_arguments(parser)
     add_custom_blocks_arguments(parser)
     parser.add_argument("--model-path", default=MODEL_PATH)
     parser.add_argument("--local-files-only", action=argparse.BooleanOptionalAction, default=LOCAL_FILES_ONLY)
@@ -240,6 +249,11 @@ def parse_args():
     add_vmm_profile_arguments(parser)
     add_attention_backend_argument(parser)
     parser.add_argument("--vae-leaf-offload", action="store_true")
+    parser.add_argument("--vae-vmm-offload", action="store_true",
+                        help="Experimental native ownership of a standalone BF16 VAE (vmm/auto).")
+    parser.add_argument("--vae-model-path", type=Path,
+                        help="Optional local or Hub VAE source; defaults to the selected pipeline's vae subfolder.")
+    parser.add_argument("--vae-vmm-resident-weight-budget-gb", type=float)
     parser.add_argument("--output-dir", default="outputs/ltx_image_modular_vmm")
     parser.add_argument("--metrics-level", type=int, choices=(0, 1, 2), default=METRICS_LEVEL)
     parser.add_argument("--memory-monitor", choices=("full", "rss"), default="full")
@@ -284,6 +298,14 @@ def parse_args():
     resolve_text_encoder_route(parser, args, native_default=native_default)
     resolve_vmm_profile(parser, args, workload_profile_name(
         "ltx23-image", f"{args.width}x{args.height}", args, IMAGE_ACTIVATION_OPTIONS))
+    budget = args.vae_vmm_resident_weight_budget_gb
+    if args.vae_vmm_offload:
+        if args.vae_leaf_offload or (args.ddo_backend, args.ddo_preset) != ("vmm", "auto"):
+            parser.error("--vae-vmm-offload requires vmm/auto without --vae-leaf-offload")
+        if budget is None or not math.isfinite(budget) or budget <= 0:
+            parser.error("--vae-vmm-offload requires a positive finite VAE residency budget")
+    elif args.vae_model_path is not None or budget is not None:
+        parser.error("VAE source and residency budget require --vae-vmm-offload")
     if args.vmm_resident_weight_budget_gb is None and not (args.ddo_backend == "vmm" and args.ddo_preset == "auto"):
         # Routes without a VMM residency profile keep the established budget.
         args.vmm_resident_weight_budget_gb = VMM_RESIDENT_WEIGHT_BUDGET_GB
@@ -403,6 +425,12 @@ def main():
     global prompt, negative_prompt
 
     args = parse_args()
+    if args.vae_vmm_offload:
+        from scripts.helpers.model_sources import resolve_vae_source
+        args.vae_model_path = resolve_vae_source(
+            args.vae_model_path, model_source=args.model_path,
+            local_files_only=args.local_files_only,
+        )
     custom, custom_blocks_metadata = load_custom_blocks(args)
     LTX2ImageDistilledBlocks = custom.LTX2ImageDistilledBlocks
     LTX2ImageTextEncoderStep = custom.LTX2ImageTextEncoderStep
@@ -897,6 +925,7 @@ def main():
             **transformer_load_kwargs,
         )
         prepared_transformer = transformer_load.module
+        configure_image_attention(prepared_transformer, args, run_metrics)
         load_ltx_lora(prepared_transformer, args, run_metrics, record_event)
         prepared_dynamic_offload_hook = transformer_load.hook
         record_event(
@@ -1122,7 +1151,7 @@ def main():
                 enabled=True, native_units=args.ddo_native_timeline,
                 diagnostic_step_wait=args.ddo_diagnostic_step_wait,
             ) if args.ddo_gpu_timing else nullcontext()
-            with transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer, \
+            with tracker.subphase(f"denoise{repeat_suffix}"), transformer_offload.profile_run() as ddo_profile_report, execution_timer as ddo_timer, \
                     sdpa_backend_priority(args.attention_backend, run_metrics):
                 denoise_progress_callback.execution_timer = ddo_timer
                 denoise_state = denoise_pipe(
@@ -1215,15 +1244,28 @@ def main():
     t0 = step_start("Load VAE for decode")
 
     event_t0 = time.time()
-    vae = AutoencoderKLLTX2Video.from_pretrained(
-        MODEL_PATH,
-        subfolder="vae",
-        torch_dtype=DTYPE,
-        low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
-        local_files_only=LOCAL_FILES_ONLY,
-    )
+    vae_source = MODEL_PATH
+    vae_config = None
+    if args.vae_vmm_offload:
+        from scripts.helpers.text_encoder_route import native_text_encoder_config
+
+        vae_config = native_text_encoder_config(DYNAMIC_OFFLOAD_CONFIG, args.vae_vmm_resident_weight_budget_gb)
+        vae_source = str(args.vae_model_path.resolve())
+        vae_loaded = from_pretrained_with_dynamic_offload(
+            vae_source, model_loader=AutoencoderKLLTX2Video, torch_dtype=DTYPE,
+            dynamic_offload_config=vae_config, apply_dynamic=False, local_files_only=True, low_cpu_mem_usage=True,
+        )
+        vae = vae_loaded.module.eval()
+        record_runner_report(args, tracker, vae_loaded.inspect_vmm_component(component="vae"), "vae_preflight")
+        del vae_loaded
+    else:
+        vae = AutoencoderKLLTX2Video.from_pretrained(
+            MODEL_PATH, subfolder="vae", torch_dtype=DTYPE, low_cpu_mem_usage=MODEL_LOW_CPU_MEM_USAGE,
+            local_files_only=LOCAL_FILES_ONLY,
+        )
+    vae_route = "dynamic_offload" if args.vae_vmm_offload else "diffusers_group_offload" if args.vae_leaf_offload else "none"
     vae_offload = enable_offload(
-        vae, component="vae", route="diffusers_group_offload" if args.vae_leaf_offload else "none",
+        vae, component="vae", route=vae_route, config=vae_config,
         execution_device=DEVICE, offload_device="cpu", use_environment=False,
         offload_type="leaf_level", use_stream=False, low_cpu_mem_usage=False,
         record_event=record_event,
@@ -1231,7 +1273,7 @@ def main():
     if vae_offload.should_move_to_execution_device:
         vae.to(DEVICE)
     run_metrics["vae_decode_route"] = vae_offload.route
-    record_event("load_vae_for_decode", time.time() - event_t0, source=MODEL_PATH,
+    record_event("load_vae_for_decode", time.time() - event_t0, source=vae_source,
                  route=vae_offload.route)
     step_end("Load VAE for decode", t0)
     t0 = step_start("Decode VAE")
@@ -1257,6 +1299,8 @@ def main():
     step_end("Decode VAE", t0)
     t0 = step_start("Cleanup VAE")
 
+    if args.vae_vmm_offload:
+        remove_dynamic_offload(vae)
     del decode_pipe, vae_offload, vae, image_latent
     cleanup_runtime_state(record_event, "cleanup_after_vae_decode")
     step_end("Cleanup VAE", t0)

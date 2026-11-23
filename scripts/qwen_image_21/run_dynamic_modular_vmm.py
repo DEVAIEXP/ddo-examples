@@ -8,17 +8,27 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 # Allocator bootstrap remains before Torch, DDO or CUDA-owning imports.
 from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
 
 if not any(flag in sys.argv[1:] for flag in ("--help", "-h")) and vmm_fast_requested(default_backend="vmm"):
     ensure_vmm_fast_process()
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.runner_logging import configure_runner_logging, quiet_qwen_processor_doc_notices
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, apply_execution_backing_reclaim
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 from scripts.helpers.text_encoder_route import (
     add_text_encoder_arguments, native_text_encoder_config, resolve_text_encoder_route,
 )
@@ -35,6 +45,7 @@ def parse_args(argv=None):
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
+    add_image_attention_arguments(parser, qwen=True)
     add_dynamic_offload_arguments(parser)
     parser.set_defaults(ddo_backend="vmm")
     add_reporting_arguments(parser)
@@ -72,7 +83,7 @@ def parse_args(argv=None):
         "--vae-resident", action="store_true", help="Override the preset VAE policy with resident decode."
     )
     parser.add_argument(
-        "--vae-model-path", type=Path, help="Standalone BF16 VAE directory; required for --vae-vmm-offload."
+        "--vae-model-path", type=Path, help="BF16 VAE override; native VAE defaults to elismasilva/qwen-image-2.1-bf16-vae."
     )
     parser.add_argument(
         "--vae-vmm-resident-weight-budget-gb",
@@ -123,8 +134,9 @@ def parse_args(argv=None):
             parser.error("--vae-vmm-offload and --vae-leaf-offload are mutually exclusive")
         if args.ddo_backend != "vmm" or args.ddo_preset != "auto":
             parser.error("--vae-vmm-offload requires the native vmm/auto route")
-        if args.vae_model_path is None or not args.vae_model_path.is_dir():
-            parser.error("--vae-vmm-offload requires an existing --vae-model-path directory")
+        if args.vae_model_path is None:
+            from scripts.helpers.model_sources import QWEN_BF16_VAE
+            args.vae_model_path = Path(QWEN_BF16_VAE)
         budget = args.vae_vmm_resident_weight_budget_gb
         if budget is None or not math.isfinite(budget) or budget <= 0:
             parser.error("--vae-vmm-offload requires a finite positive --vae-vmm-resident-weight-budget-gb")
@@ -148,6 +160,9 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
+    if args.vae_vmm_offload:
+        from scripts.helpers.model_sources import resolve_model_source
+        args.vae_model_path = resolve_model_source(args.vae_model_path, local_files_only=args.local_files_only)
     if args.ddo_backend != "vmm":
         raise ValueError("Use run_dynamic_modular.py for linear/compatibility routes.")
     import diffusers
@@ -176,7 +191,8 @@ def main():
         resolve_dynamic_offload_backend,
     )
     from huggingface_hub import snapshot_download
-    from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+    with quiet_qwen_processor_doc_notices():
+        from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
     from scripts.helpers.inference_utils import flush
     from scripts.helpers.runner_reporting import RunnerReporting
@@ -243,6 +259,7 @@ def main():
                     torch_dtype=dtype,
                     **loading,
                 ).eval()
+        with quiet_qwen_processor_doc_notices():
             processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
         with run.phase("attach_text_encoder"):
             if encoder_config is not None:
@@ -298,6 +315,7 @@ def main():
                 **loading,
             )
             transformer = loaded.module
+            configure_image_attention(transformer, args, metrics, qwen=True)
             run.report(loaded.inspect_vmm_component(component="transformer"), "transformer_preflight")
             del loaded
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model, subfolder="scheduler", **loading)
@@ -408,11 +426,14 @@ def main():
                 # The transformer config is unchanged; VAE capacity is explicit.
                 vae_config = replace(
                     config,
+                    vmm_native_transport=True,
                     vmm_component_tensor_ownership=True,
                     vmm_execution_auxiliary_ownership=False,
                     vmm_float8_weight_only=False,
                     vmm_module_pattern=".*",
                     vmm_resident_weight_budget_gb=args.vae_vmm_resident_weight_budget_gb,
+                    profile_name=None,
+                    build_profile=False,
                 )
                 vae_loaded = from_pretrained_with_dynamic_offload(
                     args.vae_model_path,

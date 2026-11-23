@@ -13,6 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
@@ -193,8 +201,9 @@ def parse_args(argv=None):
         from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not args.fp8_group_offload_control and not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("FP8 weight-only requires native vmm/auto.")
-        if not args.model_path or not args.local_files_only:
-            parser.error("FP8 requires --model-path pointing to the converted model root and --local-files-only.")
+        if not args.model_path:
+            from scripts.helpers.model_sources import LTX_VIDEO_FP8
+            args.model_path = LTX_VIDEO_FP8
         if (args.compile_repeated_blocks or args.fused_rms_modulation or args.fused_rotary_pair
                 or args.external_qk_rope_library or args.independent_qk_rope or args.compile_triton_execution
                 or args.detach_transformer_auxiliary_cpu_sources):
@@ -454,6 +463,9 @@ def resolve_local_transformer_loader(blocks):
 
 
 def run(args, *, activation_capture=None, transformer_setup=None):
+    if args.transformer_fp8_weight_only:
+        from scripts.helpers.model_sources import resolve_model_source
+        args.model_path = str(resolve_model_source(args.model_path, local_files_only=args.local_files_only))
     if transformer_setup is not None and activation_capture is None:
         raise ValueError("Experimental transformer setup requires the explicit activation capture")
     if activation_capture is not None:
@@ -1068,7 +1080,7 @@ def capture_pool_traces(library):
 
 def main():
     os.environ.setdefault("HF_MODULES_CACHE", str(ROOT / ".hf_modules_modular_video"))
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
     if not any(flag in sys.argv[1:] for flag in ("--help", "-h", "--dry-run")) and vmm_fast_requested():
         early = argparse.ArgumentParser(add_help=False)

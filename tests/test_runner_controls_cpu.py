@@ -51,6 +51,9 @@ def test_backend_reporting_preserves_base_settings(backend_name, preset):
 
 def parser_body(path):
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    if path.name == "run_diffusers_leaf.py" and path.parent.name in ("ltx2_image", "ltx2_video"):
+        parse = parser_body(path.with_name("run_dynamic_modular_distilled.py"))
+        return lambda *args, **kwargs: parse(*args, official_leaf=True, **kwargs)
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "parse_args")
     namespace = dict(argparse=argparse, math=math, os=os, sys=sys, Path=Path, ROOT=ROOT,
                      parse_common_arguments=parse_common_arguments, __doc__="CPU parser contract",

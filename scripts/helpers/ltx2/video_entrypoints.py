@@ -25,13 +25,15 @@ MINIMAL = {
 
 def configure_parser(parser, entrypoint):
     """Keep defaults for hidden internal options, but reject them at the CLI."""
-    if entrypoint not in {"legacy", "diagnostics", "vmm", "linear", "minimal"}:
+    if entrypoint not in {"legacy", "diagnostics", "vmm", "linear", "minimal", "model-features"}:
         raise ValueError(f"Unknown video entrypoint: {entrypoint}")
     if entrypoint in {"legacy", "diagnostics"}:
         return
     for action in list(parser._actions):
         hidden = (
             action.dest not in MINIMAL if entrypoint == "minimal" else
+            action.dest in (DIAGNOSTICS - {"fused_rms_modulation", "fused_rotary_pair"})
+            if entrypoint == "model-features" else
             action.dest in DIAGNOSTICS if entrypoint == "vmm" else
             action.dest in NATIVE or action.dest.startswith("ddo_vmm_")
         )
@@ -43,7 +45,7 @@ def configure_parser(parser, entrypoint):
                     group._group_actions.remove(action)
             for option in action.option_strings:
                 parser._option_string_actions.pop(option, None)
-    backend = "vmm" if entrypoint == "vmm" else "linear"
+    backend = "vmm" if entrypoint in {"vmm", "model-features"} else "linear"
     parser.set_defaults(ddo_backend=backend)
     for action in parser._actions:
         if action.dest == "ddo_backend":

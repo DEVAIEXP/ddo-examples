@@ -10,6 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
 
 SDNQ_MODEL = "OzzyGT/Qwen_Image_2_1_sdnq_dynamic_4bit"
 SDNQ_REVISION = "59d4c3610379d91fb023c4d0b6527c76755491c4"
@@ -39,12 +43,18 @@ def sdnq_settings(args, device):
     )
 
 
+from scripts.helpers.runner_logging import configure_runner_logging, quiet_qwen_processor_doc_notices
+
+configure_runner_logging()
+
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 
 def parse_args(argv=None):
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
     parser = argparse.ArgumentParser(description=__doc__)
+    add_image_attention_arguments(parser, qwen=True)
     parser.add_argument(
         "--ddo-preset",
         default="auto",
@@ -69,6 +79,10 @@ def parse_args(argv=None):
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--text-encoder-leaf-offload", action="store_true",
+                        help="Use explicit no-stream Leaf text encoding.")
+    parser.add_argument("--validate-ddo-profile", action="store_true",
+                        help="Validate a pending SDNQ probe with two steps, without decode.")
     from scripts.helpers.qwen_custom_blocks import add_custom_blocks_arguments
 
     add_custom_blocks_arguments(parser)
@@ -98,7 +112,16 @@ def parse_args(argv=None):
         action="store_true",
         help="Opt-in local convolution padding; requires --vae-no-temporal-cache.",
     )
-    args = parse_common_arguments(parser, argv, canonical_image=True)
+    args = parse_common_arguments(parser, argv, canonical_image=True, workload_profiles=True)
+    # An omitted host flag must not inherit an installed preset's purge policy.
+    for phase in ("before_run", "after_text_encoder", "before_transformer", "after_run"):
+        name = "purge_" + phase
+        if getattr(args, name) is None:
+            setattr(args, name, False)
+    if args.validate_ddo_profile and (not args.ddo_profile or args.build_ddo_profile):
+        parser.error("--validate-ddo-profile requires --ddo-profile and excludes --build-ddo-profile.")
+    if args.ddo_profile and args.ddo_preset == "diffusers_leaf_offload_compat":
+        parser.error("The Leaf control does not use a DDO capacity profile.")
     if sum((args.vae_linear_offload, args.vae_leaf_offload, args.vae_resident)) > 1:
         parser.error("VAE linear, leaf and resident overrides are mutually exclusive")
     if args.vae_linear_offload and args.ddo_preset not in (
@@ -142,7 +165,8 @@ def main():
         remove_dynamic_offload,
     )
     from huggingface_hub import snapshot_download
-    from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+    with quiet_qwen_processor_doc_notices():
+        from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
     from scripts.helpers.inference_utils import flush
     from scripts.helpers.runner_reporting import RunnerReporting
@@ -151,6 +175,8 @@ def main():
     loading = {"local_files_only": args.local_files_only}
     device, dtype = "cuda:0", torch.bfloat16
     settings = sdnq_settings(args, device)
+    profile_only = args.build_ddo_profile or args.validate_ddo_profile
+    active_steps = 2 if profile_only else args.steps
     quantized_source = transformer_source(args)
     quantized_loading = {**loading, "revision": transformer_revision(args)}
     overrides = {}
@@ -170,6 +196,8 @@ def main():
         "transformer_source": quantized_source,
         "transformer_revision": transformer_revision(args),
         "sdnq_version": sdnq.__version__,
+        "build_ddo_profile": args.build_ddo_profile,
+        "validate_ddo_profile": args.validate_ddo_profile,
         "custom_blocks": custom_blocks_metadata,
         **route_description,
         "events": [],
@@ -208,12 +236,16 @@ def main():
                 torch_dtype=dtype,
                 **loading,
             ).eval()
+        with quiet_qwen_processor_doc_notices():
             processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
         with run.phase("attach_text_encoder"):
             text_result = enable_offload(
                 text_encoder,
                 component="text_encoder",
                 preset="one_shot_fast",
+                route="diffusers_group_offload" if args.text_encoder_leaf_offload else None,
+                offload_type="leaf_level",
+                use_stream=False,
                 execution_device=device,
                 use_environment=False,
                 record_event=run.tracker.record_event,
@@ -263,6 +295,7 @@ def main():
                 **quantized_loading,
             ).eval()
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model, subfolder="scheduler", **loading)
+            configure_image_attention(transformer, args, metrics, qwen=True)
         backend = detect_quantized_backend_modules(transformer)
         if not backend.get("sdnq_module_count"):
             raise RuntimeError("No SDNQ modules loaded; refusing an unquantized fallback.")
@@ -272,6 +305,8 @@ def main():
                 transformer,
                 component="transformer",
                 settings=settings,
+                profile_name=args.ddo_profile or "",
+                build_profile=args.build_ddo_profile,
                 route="diffusers_group_offload" if settings.plan else "dynamic_offload",
                 offload_type="leaf_level",
                 use_stream=True,
@@ -281,7 +316,7 @@ def main():
                 use_environment=False,
                 record_event=run.tracker.record_event,
             )
-        with result.cleanup_on_error():
+        with result.cleanup_on_error(), result.profile_run() as profile_report:
             with run.phase("prepare"):
                 prepare = QwenImage21PrepareStep().init_pipeline()
                 prepare.update_components(transformer=transformer, scheduler=scheduler, sample_sigmas=sample_sigmas)
@@ -290,7 +325,7 @@ def main():
                     execution_device=device,
                     height=args.height,
                     width=args.width,
-                    num_inference_steps=args.steps,
+                    num_inference_steps=active_steps,
                     generator=torch.Generator().manual_seed(args.seed),
                 )
                 # Drop CPU conditioning and the preparation pipeline before denoise.
@@ -337,11 +372,18 @@ def main():
                     ),
                     "transformer",
                 )
+        metrics["ddo_profile"] = profile_report
+        if profile_only:
+            kind = profile_report.get("profile_measurement_kind")
+            profile_report["build_stage"] = "probe_pending" if kind == "sdnq_baseline_probe_pending" else "final"
         with run.phase("cleanup_transformer"):
             remove_dynamic_offload(transformer)
             # Remove all state/component references, not just the module variable.
             del result, transformer, prepared, denoise, scheduler, timer, callback
             flush()
+
+        if profile_only:
+            return
 
         with run.phase("load_vae"):
             vae_class = QwenImage21ImageVAE if args.vae_no_temporal_cache else AutoencoderKLQwenImage21

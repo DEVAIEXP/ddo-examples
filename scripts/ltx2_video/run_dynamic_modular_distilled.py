@@ -13,20 +13,29 @@ import math
 import os
 from pathlib import Path
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+PYTORCH_ALLOCATOR_STARTUP_ENVIRONMENT = configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
 from scripts.helpers.ltx2.timestep_layout import compact_timestep_repeat
+from scripts.helpers.ltx2.host_cache import default_host_cache_release, release_host_cache_before_vae
 
 from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, streaming_video_decoder_step, validate_video_decoder
 from scripts.helpers.ltx2.video_self_attention import (
     add_video_self_attention_argument,
     record_attention_adjusted_total,
-    record_nvidia_driver,
     video_self_attention,
 )
 
@@ -83,6 +92,8 @@ def parse_args(argv=None, *, official_leaf=False):
     add_lora_arguments(parser)
     add_video_self_attention_argument(parser)
     if official_leaf:
+        parser.add_argument("--no-stream-offload", action="store_true",
+                            help="Use non-streamed Diffusers Leaf offload for model weights.")
         parser.set_defaults(output_dir=str(ROOT / "outputs/ltx23_diffusers_leaf"),
                             feed_forward_chunk_size=0, normalization_chunk_size=0,
                             reuse_rotary_embeddings=False, phase_modulation=False,
@@ -91,7 +102,14 @@ def parse_args(argv=None, *, official_leaf=False):
                             build_ddo_profile=False)
         args = parser.parse_args(argv)
     else:
+        parser.add_argument("--purge-before-vae", action="store_true",
+                            help="Purge the Windows standby cache before loading the video VAE.")
+        parser.add_argument("--release-pytorch-host-cache-before-vae", action=argparse.BooleanOptionalAction,
+                            default=None, help="Release unused PyTorch pinned host cache after transformer cleanup. "
+                            "Defaults to on for native Linux DDO linear presets; off for Windows, WSL and compatibility routes.")
         args = parse_common_arguments(parser, argv, canonical_video=True, workload_profiles=True)
+        if args.release_pytorch_host_cache_before_vae is None:
+            args.release_pytorch_host_cache_before_vae = default_host_cache_release(args.ddo_preset)
     validate_lora_arguments(parser, args)
     if (args.width <= 0 or args.height <= 0 or args.width % 32 or args.height % 32 or
             not math.isfinite(args.seconds) or args.seconds <= 0 or
@@ -197,7 +215,7 @@ def main(*, official_leaf=False):
                           "phases": ["text_encoder", "connectors", "video_encoder", "audio_encoder",
                                      "prepare", "denoise", "trim", "decode"]}, indent=2))
         return
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     os.environ.setdefault("HF_MODULES_CACHE", str(ROOT / ".hf_modules_modular_video"))
     import torch
     from diffusers import ModularPipelineBlocks
@@ -226,11 +244,12 @@ def main(*, official_leaf=False):
     stages = blocks.sub_blocks
     transformer_type = next(spec.type_hint for spec in blocks.expected_components if spec.name == "transformer")
     device, dtype = "cuda:0", torch.bfloat16
-    metrics = {"runner": runner_name, "events": [], "steps": [], "requested_controls": vars(args).copy()}
+    metrics = {"runner": runner_name, "events": [], "steps": [], "requested_controls": vars(args).copy(),
+               "pytorch_allocator_startup_environment": PYTORCH_ALLOCATOR_STARTUP_ENVIRONMENT.copy()}
     if official_leaf:
         from diffusers.hooks.group_offloading import apply_group_offloading
         metrics["offload"] = {"backend": "diffusers", "offload_type": "leaf_level",
-                              "use_stream": True, "low_cpu_mem_usage": True}
+                              "use_stream": not args.no_stream_offload, "low_cpu_mem_usage": True}
     else:
         from diffusers_dynamic_offloader import (
             DynamicOffloadSettings, enable_offload, from_pretrained_with_dynamic_offload,
@@ -239,8 +258,8 @@ def main(*, official_leaf=False):
         settings = DynamicOffloadSettings.from_env(execution_device=device, offload_device="cpu",
                                                   default_preset=args.ddo_preset, environ=runner_settings_environ(args))
         print_linear_memory_policy(settings)
-    record_nvidia_driver(metrics)
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
+    metrics.setdefault("attention_environment", {})["nvidia_driver_versions"] = metrics.get("nvidia_driver_versions")
     active = []
     pipe = None
     output_dir = Path(args.output_dir)
@@ -265,7 +284,7 @@ def main(*, official_leaf=False):
         if official_leaf:
             apply_group_offloading(module, onload_device=torch.device(device), offload_device=torch.device("cpu"),
                                    offload_type="leaf_level", low_cpu_mem_usage=True,
-                                   use_stream=True, record_stream=False)
+                                   use_stream=metrics["offload"]["use_stream"], record_stream=False)
             return None
         result = enable_offload(module, settings=settings, component=name,
                                 route="diffusers_group_offload" if group else None,
@@ -438,8 +457,11 @@ def main(*, official_leaf=False):
             torch.cuda.synchronize(device)
         if profile_report is not None:
             metrics["ddo_profile"] = profile_report
+        tracker.step_end("denoise", start)
+        metrics["denoise_phase_scope"] = "sampling_loop_including_weight_transfers_excluding_transformer_cleanup"
+        cleanup_start = tracker.step_start("cleanup_transformer")
         with cleanup():
-            finish_phase("denoise", start, pipe)
+            finish_phase("cleanup_transformer", cleanup_start, pipe)
         for handle in chunk_handles:
             handle.remove()
         chunk_handles.clear()
@@ -457,8 +479,13 @@ def main(*, official_leaf=False):
         torch.cuda.empty_cache()
         run_stage(load_phase(stages["trim"], phase_device="cpu"), state, "cpu")
 
+        if not official_leaf and args.release_pytorch_host_cache_before_vae:
+            release_host_cache_before_vae(tracker, device)
+
         # 7. Match the VMM decode contract; transformer offload is independent.
-        start = tracker.step_start("decode_and_save")
+        decode_and_save_start = time.time()
+        if not official_leaf and args.purge_before_vae:
+            purge("before_vae")
         decoded = {}
         decoder_stages = [("video", stages["decode"].sub_blocks["video"], ["vae"]),
                           ("audio", stages["decode"].sub_blocks["audio"], ["audio_vae", "vocoder"])]
@@ -471,6 +498,7 @@ def main(*, official_leaf=False):
                                    "planned_stages": [name for name, _, _ in decoder_stages],
                                    "completed_stages": []}
         for name, decoder_block, component_names in decoder_stages:
+            load_start = tracker.step_start("load_decode_" + name)
             pipe = load_phase(decoder_block, component_names, phase_device=args.decode_device)
             if name == "video":
                 pipe.vae.enable_tiling()
@@ -478,18 +506,23 @@ def main(*, official_leaf=False):
             elif name == "audio":
                 audio_rate = pipe.vocoder.config.output_sampling_rate
             pipe.to(args.decode_device)
+            tracker.step_end("load_decode_" + name, load_start)
             state["output_type"] = "pil"
             input_device = "cpu" if args.stream_video_decode and name == "video" else args.decode_device
+            decode_start = tracker.step_start("decode_" + name)
             run_stage(pipe, state, input_device)
+            tracker.step_end("decode_" + name, decode_start)
             if name != "audio_mel":
                 decoded[name] = state.pop("videos" if name == "video" else "audio")
             if args.stream_video_decode and name == "audio":
                 state.pop("generated_mel_spectrograms", None)
+            cleanup_start = tracker.step_start("cleanup_decode_" + name)
             pipe.unload_components(component_names)
             metrics["decode_route"]["completed_stages"].append(name)
             pipe = None
             gc.collect()
             torch.cuda.empty_cache()
+            tracker.step_end("cleanup_decode_" + name, cleanup_start)
         video, audio = decoded["video"][0], decoded["audio"][0].float().cpu()
         if len(video) != frames or any(frame.size != (args.width, args.height) for frame in video):
             raise RuntimeError("Decoded frame count/resolution mismatch")
@@ -497,8 +530,11 @@ def main(*, official_leaf=False):
             raise RuntimeError("Decoded audio is empty or non-finite")
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"ltx23_modular_{args.width}x{args.height}_{args.seconds}s_seed{args.seed}.mp4"
+        save_start = tracker.step_start("save_video")
         encode_video(video, fps=args.frame_rate, output_path=str(output_path), audio=audio, audio_sample_rate=audio_rate)
-        tracker.step_end("decode_and_save", start)
+        tracker.step_end("save_video", save_start)
+        tracker.record_event("decode_and_save", time.time() - decode_and_save_start,
+                             scope="aggregate_wall_time_not_an_additional_phase")
         metrics.update(status="completed", output_path=str(output_path))
         if official_leaf:
             metrics["decoded_media"] = dict(frames=len(video), width=args.width, height=args.height)

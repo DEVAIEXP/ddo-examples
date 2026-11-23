@@ -9,12 +9,14 @@ _STEPS = {
 
 def add_video_decoder_argument(parser):
     parser.add_argument(
-        "--video-decoder", choices=VIDEO_DECODERS, default="streaming-tiles",
-        help="Video decoder used with --stream-video-decode: overlapping temporal windows "
-             "(streaming-tiles, default) or exact temporal streaming of the whole sequence.")
+        "--video-decoder", choices=VIDEO_DECODERS,
+        help="Video decoder used with --stream-video-decode (default: exact-streaming). "
+             "Select streaming-tiles for overlapping temporal windows and lower peak VRAM.")
 
 
 def validate_video_decoder(parser, args):
+    if args.video_decoder is None:
+        args.video_decoder = "exact-streaming" if args.stream_video_decode else "streaming-tiles"
     if args.video_decoder != "streaming-tiles" and not args.stream_video_decode:
         parser.error("--video-decoder exact-streaming requires --stream-video-decode.")
 

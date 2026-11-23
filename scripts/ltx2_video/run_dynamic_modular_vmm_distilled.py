@@ -13,6 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from scripts.helpers.pytorch_allocator import configure_pytorch_allocator
+
+configure_pytorch_allocator()
+
+
+from scripts.helpers.runner_logging import configure_runner_logging
+
+configure_runner_logging()
 
 from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report, apply_execution_backing_reclaim
 from scripts.helpers.ltx2.lora import add_lora_arguments, validate_lora_arguments, load_ltx_lora
@@ -26,13 +34,12 @@ from scripts.helpers.ltx2.video_decoder import add_video_decoder_argument, strea
 from scripts.helpers.ltx2.video_self_attention import (
     add_video_self_attention_argument,
     record_attention_adjusted_total,
-    record_nvidia_driver,
     video_self_attention,
 )
 
 
-def parse_args(argv=None):
-    from diffusers_dynamic_offloader import add_dynamic_offload_arguments
+def parse_args(argv=None, *, entrypoint="vmm"):
+    from diffusers_dynamic_offloader import add_dynamic_offload_arguments, resolve_dynamic_offload_backend
     parser = argparse.ArgumentParser(description=__doc__, conflict_handler="resolve")
     add_dynamic_offload_arguments(parser)
     parser.add_argument("--ddo-vmm-library-path")
@@ -41,7 +48,7 @@ def parse_args(argv=None):
     parser.add_argument("--distilled-model", default="OzzyGT/LTX-2.3-Distilled-1.1")
     parser.add_argument("--model-path", help="Transformer override; auxiliary weights still use --distilled-model.")
     parser.add_argument("--transformer-fp8-weight-only", action="store_true",
-                        help="Experimental saved TorchAO FP8 component; requires native VMM and --model-path.")
+                        help="Saved TorchAO FP8 component; defaults to elismasilva/ltx2.3_video_fp8_distilled_transformer.")
     parser.add_argument("--fp8-group-offload-control", action="store_true",
                         help="Explicit standard TorchAO/leaf group-offload control; requires linear/off and disables FP8 compute experiments.")
     parser.add_argument("--fp8-group-offload-stream", action=argparse.BooleanOptionalAction, default=True,
@@ -118,7 +125,7 @@ def parse_args(argv=None):
     parser.add_argument("--show-metrics", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save-metrics", action=argparse.BooleanOptionalAction, default=True)
     from scripts.helpers.ltx2.video_entrypoints import configure_parser
-    configure_parser(parser, "vmm")
+    configure_parser(parser, entrypoint)
     add_lora_arguments(parser)
     add_video_self_attention_argument(parser)
     add_vmm_profile_arguments(parser)
@@ -126,6 +133,8 @@ def parse_args(argv=None):
     validate_lora_arguments(parser, args)
     resolve_vmm_profile(parser, args, round(args.seconds * args.frame_rate) // 8 * 8 + 1)
     args.runner_entrypoint = "vmm"
+    if entrypoint == "model-features":
+        args.benchmark_feature_entrypoint = True
     if args.compile_triton_execution:
         if not (args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
             parser.error("Compiled Triton requires regional compilation and both opaque norm flags.")
@@ -133,7 +142,6 @@ def parse_args(argv=None):
                 args.independent_qk_rope or args.external_qk_rope_library):
             parser.error("Compiled Triton is a separate callback comparison; do not mix variants.")
     if args.independent_qk_rope:
-        from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("Independent Q/K requires native vmm/auto.")
         if args.external_qk_rope_library or args.fused_rms_modulation or args.fused_rotary_pair:
@@ -148,7 +156,6 @@ def parse_args(argv=None):
             args.compile_repeated_blocks and args.compile_eager_rmsnorm and args.compile_eager_torch_rmsnorm):
         parser.error("External Q/K comparison requires regional compilation and both opaque norm flags.")
     if args.compile_repeated_blocks:
-        from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("Regional compilation diagnostics require the native vmm/auto route.")
         if args.fused_rms_modulation or args.fused_rotary_pair:
@@ -156,7 +163,6 @@ def parse_args(argv=None):
     if args.diagnose_operators and (not args.diagnose_denoise or args.steps < 3):
         parser.error("Operator diagnostics require --diagnose-denoise and at least three steps.")
     if args.diagnose_denoise:
-        from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("Denoise diagnostics require the native vmm/auto route and a separate diagnostic DLL.")
     validate_video_decoder(parser, args)
@@ -199,8 +205,9 @@ def parse_args(argv=None):
         from diffusers_dynamic_offloader import resolve_dynamic_offload_backend
         if not args.fp8_group_offload_control and not resolve_dynamic_offload_backend(args.ddo_backend, args.ddo_preset).requires_native_bootstrap:
             parser.error("FP8 weight-only requires native vmm/auto.")
-        if not args.model_path or not args.local_files_only:
-            parser.error("FP8 requires --model-path pointing to the converted model root and --local-files-only.")
+        if not args.model_path:
+            from scripts.helpers.model_sources import LTX_VIDEO_FP8
+            args.model_path = LTX_VIDEO_FP8
         if (args.compile_repeated_blocks or args.fused_rms_modulation or args.fused_rotary_pair
                 or args.external_qk_rope_library or args.independent_qk_rope or args.compile_triton_execution
                 or args.detach_transformer_auxiliary_cpu_sources):
@@ -426,6 +433,9 @@ def resolve_local_transformer_loader(blocks):
 
 
 def run(args):
+    if args.transformer_fp8_weight_only:
+        from scripts.helpers.model_sources import resolve_model_source
+        args.model_path = str(resolve_model_source(args.model_path, local_files_only=args.local_files_only))
     import torch
     from diffusers import ModularPipelineBlocks
     from diffusers.pipelines.ltx2.utils import DISTILLED_SIGMA_VALUES
@@ -463,8 +473,8 @@ def run(args):
                            effective_preset=route.effective_preset,
                            requested_pin_cpu_memory=False, effective_pin_cpu_memory=False)
     metrics = {**describe_plan(args), "events": [], "steps": [], "requested_controls": vars(args).copy()}
-    record_nvidia_driver(metrics)
     tracker = RunTracker(device, metrics, show_metrics=args.show_metrics, memory_monitor=args.memory_monitor)
+    metrics.setdefault("attention_environment", {})["nvidia_driver_versions"] = metrics.get("nvidia_driver_versions")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     active_results = []
@@ -639,6 +649,7 @@ def run(args):
             rotary_pipe = make_phase_pipeline(LTX2VideoPrepareRotaryStep(), device)
             rotary_pipe.update_components(transformer=transformer)
             invoke_stage(rotary_pipe, payload, device, retain={"rotary_embeddings"})
+            metrics["rotary_reuse_prepared"] = True
             rotary_pipe.unload_components(["transformer"])
             del rotary_pipe
         current_pipe.unload_components(["transformer", "vae", "audio_vae", "scheduler"])
@@ -656,6 +667,7 @@ def run(args):
         chunk_handles = []
         if args.phase_modulation:
             transformer.enable_phase_modulation()
+            metrics["phase_modulation_configuration_applied"] = True
         if args.frame_modulation:
             if not hasattr(transformer, "enable_frame_modulation"):
                 raise SystemExit("--frame-modulation requires custom blocks providing enable_frame_modulation")
@@ -676,9 +688,11 @@ def run(args):
         if args.feed_forward_chunk_size:
             from scripts.helpers.execution.feed_forward_chunking import enable_feed_forward_chunking
             chunk_handles.append(enable_feed_forward_chunking(transformer, args.feed_forward_chunk_size))
+            metrics["feed_forward_chunk_size_configuration_applied"] = args.feed_forward_chunk_size
         if args.normalization_chunk_size:
             from scripts.helpers.execution.feed_forward_chunking import enable_normalization_chunking
             chunk_handles.append(enable_normalization_chunking(transformer, args.normalization_chunk_size))
+            metrics["normalization_chunk_size_configuration_applied"] = args.normalization_chunk_size
         external_qk_rope_handle = None
         independent_qk_rope_handle = None
         compiled_triton_handle = None
@@ -928,7 +942,7 @@ def run(args):
 
 def main():
     os.environ.setdefault("HF_MODULES_CACHE", str(ROOT / ".hf_modules_modular_video"))
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     from ddo_vmm_bootstrap import ensure_vmm_fast_process, vmm_fast_requested
     if not any(flag in sys.argv[1:] for flag in ("--help", "-h", "--dry-run")) and vmm_fast_requested(default_backend="vmm"):
         ensure_vmm_fast_process()
