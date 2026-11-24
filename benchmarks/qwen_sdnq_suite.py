@@ -2,7 +2,6 @@
 
 import argparse
 import math
-from pathlib import Path
 import sys
 
 if __package__:
@@ -21,8 +20,7 @@ def build_plan(suite, args):
     base = argparse.Namespace(**{**vars(args), "family": "runtime", "case": "one-shot-fast",
                                 "nvme_resident_gib": 1.5})
     plan = suite.build_plan(base)
-    checkpoint = args.sdnq_model_path or Path("F:/hf_cache/hub") / (
-        "models--" + MODEL.replace("/", "--")) / "snapshots" / REVISION
+    checkpoint = args.sdnq_model_path or suite.hub_snapshot(MODEL, REVISION)
     command = [sys.executable, "-B", "-u", str(suite.ROOT / "scripts/qwen_image_21/run_dynamic_modular_sdnq.py"),
                "--auxiliary-model", plan["checkpoint"], "--model-path", str(checkpoint),
                "--custom-blocks", plan["custom_blocks"], "--local-files-only", "--variant", "base",

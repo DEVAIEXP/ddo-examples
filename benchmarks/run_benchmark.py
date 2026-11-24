@@ -144,8 +144,9 @@ def build_plan(args, *, video_decoder="streaming-tiles", profile_managed=False):
         purges["before-run"] = False
     checkpoint = args.checkpoint
     if checkpoint is None:
-        cache = Path(os.environ.get("HF_HOME", r"F:\hf_cache" if platform == "windows" else Path.home() / ".cache/huggingface"))
-        checkpoint = cache / "hub/models--OzzyGT--LTX-2.3-Distilled-1.1/snapshots" / SNAPSHOT
+        from huggingface_hub import constants
+
+        checkpoint = Path(constants.HF_HUB_CACHE) / "models--OzzyGT--LTX-2.3-Distilled-1.1/snapshots" / SNAPSHOT
     image = (args.fixtures_dir / "man_guitar.png").resolve()
     audio = (args.fixtures_dir / "diff_vocal_song.mp3").resolve()
     resident = 1.5 * args.vram_gib / 8
@@ -802,6 +803,20 @@ def verified_video_attention_reference(suite, manifest, previous, manifest_sha, 
             "profile_receipt": receipt, "resident_budget_bytes": budget}
 
 
+def video_case_description(name, family):
+    """Summarize a video case without building its platform-specific plan."""
+    if family == "attention":
+        return f"vmm / auto, transformer vmm_fast_runtime, attention {VIDEO_ATTENTION_CASES[name][0]}"
+    if name == FP8_CASE:
+        return "vmm / auto, transformer vmm_fast_runtime, saved FP8 weight-only transformer"
+    if name == OFFICIAL_LEAF_CASE:
+        return "Diffusers Leaf reference (not a DDO preset)"
+    backend, preset = RUNTIME_VARIANTS[name]
+    transformer = ("linear_runtime" if backend == "linear" else
+                   "vmm_runtime" if preset == "nvme_baseline" else "vmm_fast_runtime")
+    return f"{backend} / {preset}, transformer {transformer}"
+
+
 def video_runtime_main(suite):
     parser = argparse.ArgumentParser(description="Run the resumable LTX video runtime benchmark.")
     parser.add_argument("--recipe", choices=(PRESSURE_RECIPE,), required=True)
@@ -817,13 +832,15 @@ def video_runtime_main(suite):
     parser.add_argument("--expandable-segments", action="store_true",
                         help="Diagnostic allocator configuration before imports; Linux Low RAM Safe video only.")
     parser.add_argument("--vram-gib", type=int, choices=(8,), default=8)
-    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--checkpoint", type=Path, help=suite.CHECKPOINT_HELP)
     parser.add_argument("--custom-blocks", type=Path)
     parser.add_argument("--fixtures-dir", type=Path)
     parser.add_argument("--output-root", type=Path, default=ROOT / "outputs/benchmarks")
     parser.add_argument("--session-action", choices=("continue", "restart"))
-    parser.add_argument("--expected-dll-sha256")
-    parser.add_argument("--expected-library-sha256", help="Reviewed native library SHA-256 for Linux or WSL.")
+    parser.add_argument("--expected-dll-sha256",
+                        help="Optional Windows DLL SHA-256 to require; defaults to the installed wheel record.")
+    parser.add_argument("--expected-library-sha256",
+                        help="Optional Linux or WSL library SHA-256 to require; defaults to the installed wheel record.")
     parser.add_argument("--ffmpeg-bin", type=Path)
     parser.add_argument("--list-cases", action="store_true")
     parser.add_argument("--execute", action="store_true")
@@ -841,7 +858,7 @@ def video_runtime_main(suite):
     linear_profile = args.platform == "linux" and not attention and args.case in ("one-shot-fast", "low-ram-safe")
     if args.expandable_segments and (args.platform != "linux" or attention or args.case != "low-ram-safe"):
         parser.error("--expandable-segments requires the Linux Low RAM Safe video runtime case.")
-    if args.platform == "linux" and attention and args.case not in VIDEO_ATTENTION_CASES:
+    if args.platform == "linux" and attention and not args.list_cases and args.case not in VIDEO_ATTENTION_CASES:
         parser.error("Select a reviewed Linux video attention comparison.")
     if args.profile_file and not (linear_profile or
                                  (args.platform == "windows" and not attention and args.case == "vmm-fast")):
@@ -854,9 +871,9 @@ def video_runtime_main(suite):
     if args.case is not None and args.case not in available:
         parser.error(f"Select a video runtime case for {args.platform}: {', '.join(available)}.")
     if args.list_cases:
-        if args.execute:
-            parser.error("--list-cases cannot be used with --execute.")
-        print(json.dumps(available))
+        if args.execute or args.preflight:
+            parser.error("--list-cases cannot be used with --execute or --preflight.")
+        suite.print_cases((name, video_case_description(name, args.family)) for name in available)
         return
     control_plan = None
     if attention:
@@ -886,9 +903,6 @@ def video_runtime_main(suite):
                          if control_plan else plan, indent=2))
         return
     expected_hash = args.expected_dll_sha256 if args.platform == "windows" else args.expected_library_sha256
-    if not expected_hash:
-        flag = "--expected-dll-sha256" if args.platform == "windows" else "--expected-library-sha256"
-        parser.error(f"Execution requires {flag}.")
     if (args.execute and args.platform == "windows" and any(case["preset"] for case in plan["cases"].values())
             and not ctypes.windll.shell32.IsUserAnAdmin()):
         parser.error("Use an elevated Windows terminal for the transformer standby purge.")
@@ -905,7 +919,7 @@ def video_runtime_main(suite):
     if control_plan is not None:
         control_plan["ffprobe"] = plan["ffprobe"]
         control_plan["environment_overrides"]["DDO_RUNNER_FFMPEG_BIN"] = plan["environment_overrides"]["DDO_RUNNER_FFMPEG_BIN"]
-    identity = suite.execution_identity(plan, expected_hash.lower())
+    identity = suite.execution_identity(plan, expected_hash.lower() if expected_hash else None)
     identity.update(fixture_sha256=fixture_hashes, ffmpeg_sha256={
         name: digest(path) for name, path in tools.items()
     })

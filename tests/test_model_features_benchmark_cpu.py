@@ -439,7 +439,9 @@ def test_cli_preview_dispatches_without_initializing_cuda(tmp_path, recipe):
         str(suite.ROOT), "--platform", "windows", "--recipe", recipe,
         "--family", "model-features", "--list-cases"], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == list(features.case_names(recipe))
+    lines = result.stdout.splitlines()
+    assert [line.split()[0] for line in lines] == list(features.case_names(recipe))
+    assert all(len(line.split(None, 1)) == 2 for line in lines)
 
 
 @pytest.mark.parametrize("platform", ["linux", "windows"])

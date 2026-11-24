@@ -274,9 +274,8 @@ Preview the same queue without loading weights or initializing CUDA:
 python -B benchmarks/run_benchmark.py --platform linux --recipe ltx23-video-8s --family model-features
 ```
 
-Use the reviewed runtime checkpoint and conditioning files. Supply
-`--ffmpeg-bin` when needed and `--expected-library-sha256` for preflight or
-capture. `--session-action continue` preserves verified stages; it never
+The queue uses the reviewed runtime checkpoint and conditioning files. Supply
+`--ffmpeg-bin` when needed. `--session-action continue` preserves verified stages; it never
 turns the interrupted attempt into an accepted measurement.
 
 <a id="qwen-image"></a>
@@ -537,19 +536,20 @@ Linux, using the same prepared BF16 VAE source as the runtime benchmark:
 python -B benchmarks/run_benchmark.py --platform linux --recipe qwen-image21 --family model-features --vae-model-path elismasilva/qwen-image-2.1-bf16-vae
 ```
 
-Use `--checkpoint` to pin the reviewed Base snapshot and `--custom-blocks` to
-select its clean reviewed code. Preflight/capture require the matching native
-library SHA256 (`--expected-library-sha256` on Linux, `--expected-dll-sha256`
-on Windows). The BF16 VAE config and weight files are hashed before capture
+The queue uses the pinned Base snapshot from the Hugging Face cache, downloaded
+by preflight when missing, and the clean reviewed custom blocks; `--checkpoint`
+and `--custom-blocks` select other folders. The native library hash handling
+follows the [reproduction guide](reproduction.md#validate-and-execute).
+The BF16 VAE config and weight files are hashed before capture
 and become part of the session identity. No conversion is performed.
 Do not combine tiling with bands, alias, direct padding or single-frame in
 this study. Other combinations are not silently added to the queue.
 
 ## Evidence and continuation
 
-Use `--list-cases` to list the queue. `--case` keeps the preceding cases and
-stops after the selected addition. Preflight requires the reviewed installed
-environment, checkpoint, custom blocks and native library hash. Execution must
+Use `--list-cases` to list the queue with each case's addition. `--case` keeps
+the preceding cases and stops after the selected addition. Preflight requires the
+reviewed installed environment, checkpoint, custom blocks and native library. Execution must
 be approved separately; append `--execute` only after reviewing its commands
 and limits. Windows video execution needs elevation for its requested purge.
 

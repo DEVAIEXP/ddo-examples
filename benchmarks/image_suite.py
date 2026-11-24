@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "outputs" / "benchmarks"
 RUNTIME = ("official-leaf", "one-shot-fast", "low-ram-safe", "nvme-baseline", "vmm-fast")
 WSL_RUNTIME = ("official-leaf", "wsl-compat", "vmm-fast")
+LINUX_RUNTIME = ("official-leaf", "one-shot-fast", "low-ram-safe", "vmm-fast")
 LOW_RAM_VAE_PURGE = "low-ram-safe-pre-vae-purge"
 ATTENTION = {"official-leaf": "default", "cudnn-sdpa": "cudnn", "flash-attn2": "flash-attn2"}
 RECIPES = {
@@ -48,6 +49,80 @@ def read_json(path):
 def digest(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def hub_snapshot(repo_id, revision):
+    """Locate a pinned snapshot in the standard Hugging Face hub cache.
+
+    The cache follows huggingface_hub: HF_HUB_CACHE, then HF_HOME/hub, then the
+    user default.
+    """
+    from huggingface_hub import constants
+
+    return Path(constants.HF_HUB_CACHE) / ("models--" + repo_id.replace("/", "--")) / "snapshots" / revision
+
+
+def ensure_hub_snapshot(path, required, allow_patterns=None):
+    """Download a pinned hub-cache snapshot whose required file is missing.
+
+    Only paths with the hub-cache snapshot layout are downloaded, at their
+    pinned revision. Other local folders are never modified.
+    """
+    path = Path(path)
+    if (path / required).is_file():
+        return
+    parts = path.parts
+    if len(parts) < 3 or parts[-2] != "snapshots" or not parts[-3].startswith("models--"):
+        return
+    repo_id = parts[-3][len("models--"):].replace("--", "/", 1)
+    from huggingface_hub import snapshot_download
+
+    print(f"Downloading {repo_id} at revision {parts[-1]} into {path.parents[2]}", flush=True)
+    snapshot_download(repo_id=repo_id, revision=parts[-1], cache_dir=path.parents[2],
+                      allow_patterns=allow_patterns)
+
+
+CHECKPOINT_HELP = ("Optional local checkpoint snapshot. By default the pinned revision is used from the "
+                   "Hugging Face cache and downloaded by --preflight or --execute when missing.")
+ATTENTION_FLAGS = ("--image-self-attention", "--image-joint-attention", "--video-self-attention")
+
+
+def describe_case(case):
+    """Summarize what one planned case runs, from its routes and measured command."""
+    command = case["stages"][-1]["command"]
+
+    def value(flag):
+        return command[command.index(flag) + 1] if flag in command else None
+
+    routes = case.get("routes", {})
+    if routes.get("transformer") == "official_diffusers_leaf":
+        parts = ["Diffusers Leaf reference (not a DDO preset)"]
+    else:
+        backend = value("--ddo-backend")
+        parts = [f"{backend} / {case['preset']}" if backend else f"preset {case['preset']}",
+                 f"transformer {routes.get('transformer')}"]
+    if case.get("sdnq_checkpoint"):
+        parts.append("saved SDNQ INT4")
+    if "--transformer-fp8-weight-only" in command:
+        parts.append("saved FP8 weight-only transformer")
+    attention = next((value(flag) for flag in ATTENTION_FLAGS if value(flag) not in (None, "default")), None)
+    if attention:
+        parts.append(f"attention {attention}")
+    if routes.get("vae"):
+        parts.append(f"VAE {routes['vae']}")
+    if "--purge-before-vae" in command:
+        parts.append("purge before VAE")
+    if "--warm-process-reuse" in command:
+        parts.append("two generations in one process")
+    return ", ".join(parts)
+
+
+def print_cases(rows):
+    """Print one case name and its summary per line."""
+    rows = list(rows)
+    width = max(len(name) for name, _ in rows)
+    for name, description in rows:
+        print(f"{name:<{width}}  {description}")
 
 
 def write_state(path, state):
@@ -132,10 +207,7 @@ def build_plan(args):
     ltx = args.recipe == "ltx23-image"
     platform = getattr(args, "platform", "windows")
     wsl = platform == "wsl"
-    default_cache = Path(r"F:\hf_cache") if platform == "windows" else Path.home() / ".cache/huggingface"
-    cache = Path(os.environ.get("HF_HUB_CACHE", Path(os.environ.get("HF_HOME", default_cache)) / "hub"))
-    checkpoint = (args.checkpoint or cache / ("models--" + recipe["model"].replace("/", "--")) /
-                  "snapshots" / recipe["snapshot"]).resolve()
+    checkpoint = (args.checkpoint or hub_snapshot(recipe["model"], recipe["snapshot"])).resolve()
     blocks = (args.custom_blocks or ROOT / "modular_diffusers/custom_blocks" / recipe["folder"]).resolve()
     component_control = args.family == "components"
     component_cases = ("vmm-fast", "nvme-baseline")
@@ -147,6 +219,8 @@ def build_plan(args):
         cases = (*RUNTIME[:3], LOW_RAM_VAE_PURGE, *RUNTIME[3:])
     if wsl and args.family == "runtime":
         cases = WSL_RUNTIME
+    if platform == "linux" and args.family == "runtime":
+        cases = LINUX_RUNTIME
     if reuse:
         cases = ("warm-process",)
     if args.case:
@@ -302,8 +376,14 @@ def git(directory, *args):
     return subprocess.check_output(["git", "-C", str(directory), *args], text=True).strip()
 
 
-def execution_identity(plan, expected_dll):
+def execution_identity(plan, expected_dll=None):
+    """Record the execution identity; download a missing pinned checkpoint first.
+
+    Without expected_dll, the installed library must match its own wheel
+    artifact record. An explicit expected_dll must also match.
+    """
     from scripts.helpers.model_sources import resolve_plan_sources
+    ensure_hub_snapshot(plan["checkpoint"], "model_index.json")
     resolve_plan_sources(plan)
     import ddo_vmm_bootstrap as bootstrap
     from packaging.version import Version
@@ -331,7 +411,7 @@ def execution_identity(plan, expected_dll):
     artifact = read_json(dll.parent / "artifact.json")
     actual = digest(dll)
     exports = set(artifact.get("abi", {}).get("required_exports", []))
-    if (actual != expected_dll or actual != artifact.get("sha256")
+    if ((expected_dll is not None and actual != expected_dll) or actual != artifact.get("sha256")
             or not {"ddo_vmm_source_dispatcher_enabled", "ddo_vmm_source_cache_select_dispatcher"} <= exports):
         raise ValueError("Packaged native library identity or source dispatcher ABI differs from the reviewed artifact.")
     checkpoint = Path(plan["checkpoint"])
@@ -991,7 +1071,7 @@ def main(run):
     parser.add_argument("--list-cases", action="store_true")
     parser.add_argument("--inventory", action="store_true")
     parser.add_argument("--vram-gib", type=int, choices=(8,), default=8)
-    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--checkpoint", type=Path, help=CHECKPOINT_HELP)
     parser.add_argument("--custom-blocks", type=Path)
     parser.add_argument("--vae-model-path", type=Path, help="BF16 VAE local directory or Hub model ID for native Qwen VMM Fast.")
     parser.add_argument("--nvme-resident-gib", type=float, default=1.5)
@@ -1004,8 +1084,10 @@ def main(run):
                               help="Use only the transformer purge for the selected image runtime comparison.")
     purge_policy.add_argument("--no-purge", action="store_true",
                               help="Run the selected image comparison without standby cache purges.")
-    parser.add_argument("--expected-dll-sha256")
-    parser.add_argument("--expected-library-sha256", help="Reviewed native library SHA-256 for Linux or WSL.")
+    parser.add_argument("--expected-dll-sha256",
+                        help="Optional Windows DLL SHA-256 to require; defaults to the installed wheel record.")
+    parser.add_argument("--expected-library-sha256",
+                        help="Optional Linux or WSL library SHA-256 to require; defaults to the installed wheel record.")
     parser.add_argument("--preflight", action="store_true", help="Check package and input identity without a runner.")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
@@ -1038,7 +1120,7 @@ def main(run):
         parser.error("--reference-manifest requires --attention-runtime vmm-fast.")
     if args.platform == "linux":
         linux_runtime = (args.family == "runtime"
-                         and args.case in ("official-leaf", "one-shot-fast", "low-ram-safe", "vmm-fast"))
+                         and (args.case in LINUX_RUNTIME or (args.list_cases and args.case is None)))
         linux_attention = args.family == "attention" and args.attention_runtime == "vmm-fast"
         linux_ltx = args.recipe == "ltx23-image" and (linux_runtime or linux_attention)
         linux_component = args.family == "components" and args.component_reference_manifest
@@ -1078,14 +1160,17 @@ def main(run):
         args.family != "runtime" or not (ltx_purge_control or qwen_purge_control)
     ) and not qwen_vmm_control:
         parser.error("A purge override requires a supported explicit image runtime case.")
-    if args.family == "components" and (
+    if args.family == "components" and not args.list_cases and (
         not args.case or (args.recipe == "qwen-image21" and not qwen_vmm_control)
     ):
         parser.error("Select one explicit component case. Qwen requires nvme-baseline or vmm-fast with --no-purge.")
     if args.inventory or args.list_cases:
         if args.execute or args.preflight:
             parser.error("Inventory and case listing are read-only.")
-        print(json.dumps(inventory(args.recipe) if args.inventory else build_plan(args)["cases"], indent=2))
+        if args.inventory:
+            print(json.dumps(inventory(args.recipe), indent=2))
+        else:
+            print_cases((name, describe_case(case)) for name, case in build_plan(args)["cases"].items())
         return
     if not math.isfinite(args.nvme_resident_gib) or args.nvme_resident_gib <= 0:
         parser.error("--nvme-resident-gib must be positive and finite.")
@@ -1102,14 +1187,14 @@ def main(run):
             is_wsl = (sys.platform == "linux"
                       and "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower())
             expected_hash = args.expected_library_sha256
-            if sys.platform != "linux" or is_wsl != (args.platform == "wsl") or not expected_hash:
-                parser.error(f"{args.platform} requires a matching interpreter and --expected-library-sha256.")
+            if sys.platform != "linux" or is_wsl != (args.platform == "wsl"):
+                parser.error(f"{args.platform} requires a matching {args.platform} interpreter.")
         else:
             expected_hash = args.expected_dll_sha256
-            if sys.platform != "win32" or not expected_hash:
-                parser.error("Windows requires a Windows interpreter and the reviewed DLL SHA-256.")
+            if sys.platform != "win32":
+                parser.error("Windows requires a Windows interpreter.")
     if args.preflight or args.execute:
-        identity = execution_identity(plan, expected_hash.lower())
+        identity = execution_identity(plan, expected_hash.lower() if expected_hash else None)
         if args.component_reference_manifest:
             identity["vae_component_reference"] = verified_vae_leaf_reference(
                 args.component_reference_manifest.resolve(), identity)

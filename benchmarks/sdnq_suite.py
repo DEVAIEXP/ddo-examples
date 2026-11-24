@@ -32,8 +32,7 @@ def build_plan(suite, args):
     base = argparse.Namespace(**{**vars(args), "family": "runtime", "case": "one-shot-fast",
                                 "nvme_resident_gib": 1.5})
     plan = suite.build_plan(base)
-    checkpoint = args.sdnq_model_path or Path("F:/hf_cache/hub") / (
-        "models--" + MODEL.replace("/", "--")) / "snapshots" / REVISION
+    checkpoint = args.sdnq_model_path or suite.hub_snapshot(MODEL, REVISION)
     command = [sys.executable, "-B", "-u", str(suite.ROOT / "scripts/ltx2_image/run_dynamic_modular_sdnq_distilled.py"),
                "--model-path", plan["checkpoint"], "--sdnq-model-path", str(checkpoint),
                "--custom-blocks", plan["custom_blocks"], "--local-files-only", "--bits", "4",
@@ -217,25 +216,45 @@ def main(suite, run):
     parser.add_argument("--recipe", choices=("ltx23-image", "qwen-image21", "ltx23-video-8s"), required=True)
     parser.add_argument("--family", choices=("precision",), required=True)
     parser.add_argument("--case", choices=CASES)
-    parser.add_argument("--checkpoint", type=Path)
-    parser.add_argument("--sdnq-model-path", type=Path)
+    parser.add_argument("--checkpoint", type=Path, help=suite.CHECKPOINT_HELP)
+    parser.add_argument("--sdnq-model-path", type=Path,
+                        help="Optional saved INT4 snapshot. By default the pinned revision is used from the "
+                             "Hugging Face cache and downloaded by --preflight or --execute when missing.")
     parser.add_argument("--custom-blocks", type=Path)
     parser.add_argument("--ffmpeg-bin", type=Path)
     parser.add_argument("--output-root", type=Path, default=suite.OUTPUT)
     parser.add_argument("--session-action", choices=("continue", "restart"))
-    parser.add_argument("--expected-dll-sha256")
+    parser.add_argument("--expected-dll-sha256",
+                        help="Optional Windows DLL SHA-256 to require; defaults to the installed wheel record.")
     parser.add_argument("--list-cases", action="store_true")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--preflight", action="store_true")
     action.add_argument("--execute", action="store_true")
     args = parser.parse_args()
     plan = build_plan(suite, args)
-    if args.list_cases or not (args.preflight or args.execute):
+    if args.list_cases:
+        if args.preflight or args.execute:
+            parser.error("--list-cases cannot be used with --execute or --preflight.")
+        rows = [(name, suite.describe_case(case)) for name, case in plan["cases"].items()]
+        if args.recipe == "ltx23-video-8s" and not args.case:
+            if __package__:
+                from .run_benchmark import FP8_CASE, video_case_description
+            else:
+                from run_benchmark import FP8_CASE, video_case_description
+            rows.append((FP8_CASE, video_case_description(FP8_CASE, "precision")))
+        suite.print_cases(rows)
+        return
+    if not (args.preflight or args.execute):
         print(json.dumps(plan, indent=2))
         return
-    if sys.platform != "win32" or not args.expected_dll_sha256:
-        parser.error("Use the installed Windows RC5 environment and reviewed DLL hash.")
-    identity = suite.execution_identity(plan, args.expected_dll_sha256.lower())
+    if sys.platform != "win32":
+        parser.error("Use the installed Windows RC5 environment.")
+    identity = suite.execution_identity(
+        plan, args.expected_dll_sha256.lower() if args.expected_dll_sha256 else None)
+    # Image SDNQ repositories also contain encoders and a VAE that these runners
+    # load from the base checkpoint, so only the packed transformer is fetched.
+    suite.ensure_hub_snapshot(plan["sdnq_checkpoint"], "transformer/config.json",
+                              allow_patterns=None if args.recipe == "ltx23-video-8s" else ["transformer/*"])
     if args.recipe == "ltx23-video-8s":
         if __package__:
             from .video_sdnq_suite import prepare_media_identity

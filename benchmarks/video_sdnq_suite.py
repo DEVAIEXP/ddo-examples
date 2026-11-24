@@ -24,9 +24,8 @@ PROMPT = "the man plays the guitar and sings on an old western town"
 def build_plan(suite, args):
     if args.platform != "windows":
         raise ValueError("This SDNQ video pair is prepared only for Windows.")
-    cache = Path("F:/hf_cache/hub")
-    checkpoint = args.checkpoint or cache / "models--OzzyGT--LTX-2.3-Distilled-1.1/snapshots" / SNAPSHOT
-    packed = args.sdnq_model_path or cache / ("models--" + MODEL.replace("/", "--")) / "snapshots" / REVISION
+    checkpoint = args.checkpoint or suite.hub_snapshot("OzzyGT/LTX-2.3-Distilled-1.1", SNAPSHOT)
+    packed = args.sdnq_model_path or suite.hub_snapshot(MODEL, REVISION)
     blocks = args.custom_blocks or suite.ROOT / "modular_diffusers/custom_blocks/ltx2_video"
     fixtures = suite.ROOT / "benchmarks/inputs/ltx23-video-5s"
     image, audio = fixtures / "man_guitar.png", fixtures / "diff_vocal_song.mp3"

@@ -46,6 +46,22 @@ def case_names(recipe):
             *(() if recipe == VIDEO else (item[0] for item in QWEN_BRANCHES)))
 
 
+def case_description(recipe, name):
+    """Summarize one cumulative case: the control, an added feature or a branch."""
+    if name == CONTROL:
+        return "vmm / auto, transformer vmm_fast_runtime, control without the series features"
+    if recipe == QWEN:
+        branch = next((item for item in QWEN_BRANCHES if item[0] == name), None)
+        if branch:
+            _, parent, overrides = branch
+            return f"branch from {parent} with " + ", ".join(f"{key}={value}" for key, value in overrides.items())
+        _, field, value = next(item for item in QWEN_FEATURES if item[0] == name)
+    else:
+        _, field, value = next(((item[0], item[1], True) for item in VIDEO_FEATURES if item[0] == name), None) or next(
+            item for item in VIDEO_CHUNKS if item[0] == name)
+    return "previous case + " + (field if value is True else f"{field}={value}")
+
+
 def set_option(command, name, value):
     """Replace both boolean spellings instead of depending on argument order."""
     flag = "--" + name.replace("_", "-")
@@ -299,15 +315,17 @@ def main(suite, video, run):
     parser.add_argument("--recipe", choices=(VIDEO, QWEN, "ltx23-image"), required=True)
     parser.add_argument("--family", choices=("model-features",), required=True)
     parser.add_argument("--case", help="Stop after this cumulative case, including its prerequisites.")
-    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--checkpoint", type=Path, help=suite.CHECKPOINT_HELP)
     parser.add_argument("--custom-blocks", type=Path)
     parser.add_argument("--vae-model-path", type=Path)
     parser.add_argument("--fixtures-dir", type=Path)
     parser.add_argument("--ffmpeg-bin", type=Path)
     parser.add_argument("--output-root", type=Path, default=suite.OUTPUT)
     parser.add_argument("--vram-gib", type=int, choices=(8,), default=8)
-    parser.add_argument("--expected-dll-sha256")
-    parser.add_argument("--expected-library-sha256")
+    parser.add_argument("--expected-dll-sha256",
+                        help="Optional Windows DLL SHA-256 to require; defaults to the installed wheel record.")
+    parser.add_argument("--expected-library-sha256",
+                        help="Optional Linux library SHA-256 to require; defaults to the installed wheel record.")
     parser.add_argument("--session-action", choices=("continue", "restart"))
     parser.add_argument("--list-cases", action="store_true")
     mode = parser.add_mutually_exclusive_group()
@@ -321,7 +339,7 @@ def main(suite, video, run):
         if args.list_cases:
             if args.execute or args.preflight:
                 parser.error("Case listing cannot execute or preflight a series.")
-            print(json.dumps(names))
+            suite.print_cases((name, case_description(args.recipe, name)) for name in names)
             return
         plan = build_plan(suite, video, args)
     except ValueError as error:
@@ -335,8 +353,6 @@ def main(suite, video, run):
     if video.current_platform() != args.platform:
         parser.error("Use the matching native platform RC5 environment for this series.")
     expected_hash = args.expected_library_sha256 if args.platform == "linux" else args.expected_dll_sha256
-    if not expected_hash:
-        parser.error("Supply --expected-library-sha256 on Linux or --expected-dll-sha256 on Windows.")
     if args.recipe == QWEN and args.vae_model_path is None:
         parser.error("Supply the reviewed BF16 native --vae-model-path, as in the runtime control.")
     if args.recipe == VIDEO:
@@ -351,7 +367,7 @@ def main(suite, video, run):
             parser.error("Pass --ffmpeg-bin containing FFmpeg and ffprobe.")
         plan["ffprobe"] = str(Path(tools["ffprobe"]).resolve())
         plan["environment_overrides"]["DDO_RUNNER_FFMPEG_BIN"] = str(Path(tools["ffmpeg"]).resolve().parent)
-    identity = suite.execution_identity(plan, expected_hash.lower())
+    identity = suite.execution_identity(plan, expected_hash.lower() if expected_hash else None)
     if args.recipe == QWEN:
         command = next(iter(plan["cases"].values()))["stages"][-1]["command"]
         source = Path(command[command.index("--vae-model-path") + 1])
