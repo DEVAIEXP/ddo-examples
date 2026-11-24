@@ -58,6 +58,14 @@ def test_hub_revision_and_offline_mode_are_preserved(tmp_path, dependencies):
     assert metadata["requested_revision"] == "fixed-sha"
 
 
+def test_default_source_is_the_trusted_hub_repository():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    loader.add_custom_blocks_arguments(parser)
+    assert parser.parse_args([]).custom_blocks == "elismasilva/ltx2.3_image_custom_blocks"
+
+
 def test_local_revision_is_rejected(tmp_path, dependencies):
     with pytest.raises(ValueError, match="only to Hub"):
         loader.load_custom_blocks(arguments(tmp_path, "main"))
@@ -113,7 +121,9 @@ def test_real_local_custom_code_loads_without_cuda(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(huggingface_hub, "snapshot_download", forbid)
     monkeypatch.setattr(dynamic, "HF_MODULES_CACHE", str(tmp_path / "modules"))
-    module, metadata = loader.load_custom_blocks(arguments(loader.DEFAULT_SOURCE))
+    if not (loader.LOCAL_CHECKOUT / "modular_config.json").is_file():
+        pytest.skip("The optional local LTX image custom-block checkout is not prepared.")
+    module, metadata = loader.load_custom_blocks(arguments(loader.LOCAL_CHECKOUT))
     assert all(hasattr(module, name) for name in loader.REQUIRED_EXPORTS)
     assert metadata["source"] == "local"
     assert not torch.cuda.is_initialized()

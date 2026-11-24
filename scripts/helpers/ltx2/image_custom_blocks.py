@@ -3,7 +3,9 @@
 from importlib import import_module
 from pathlib import Path
 
-DEFAULT_SOURCE = Path(__file__).resolve().parents[3] / "modular_diffusers/custom_blocks/ltx2_image"
+DEFAULT_REPOSITORY = "elismasilva/ltx2.3_image_custom_blocks"
+# Optional development checkout prepared by scripts/setup_custom_blocks.py.
+LOCAL_CHECKOUT = Path(__file__).resolve().parents[3] / "modular_diffusers/custom_blocks/ltx2_image"
 REQUIRED_EXPORTS = (
     "LTX2ImageDistilledBlocks", "LTX2ImageTextEncoderStep", "LTX2ImageConnectorStep",
     "LTX2ImageDenoiseStep", "LTX2ImagePrepareLatentsStep",
@@ -12,8 +14,8 @@ REQUIRED_EXPORTS = (
 
 
 def add_custom_blocks_arguments(parser):
-    parser.add_argument("--custom-blocks", default=str(DEFAULT_SOURCE),
-                        help="Trusted Hub code repository or local LTX image checkout; defaults to the existing local clone.")
+    parser.add_argument("--custom-blocks", default=DEFAULT_REPOSITORY,
+                        help="Trusted Hub code repository or local LTX image checkout.")
     parser.add_argument("--custom-blocks-revision", help="Hub code revision; rejected for a local checkout.")
 
 
@@ -25,7 +27,7 @@ def load_custom_blocks(args):
     source = Path(args.custom_blocks)
     local = source.is_dir()
     if not local:
-        if source == DEFAULT_SOURCE or source.is_absolute():
+        if source.is_absolute():
             raise FileNotFoundError(f"Custom-block directory does not exist: {source}")
         source = Path(snapshot_download(
             repo_id=args.custom_blocks, revision=args.custom_blocks_revision,

@@ -58,7 +58,7 @@ offload is enabled. No unimplemented dynamic encoder option is accepted.
 | Control | Purpose and default |
 | --- | --- |
 | `--model-path PATH_OR_ID` | Pipeline checkpoint. Default `elismasilva/ltx2.3-image-distilled-1.1`, overridable by the `MODEL_PATH` environment variable. |
-| `--custom-blocks SOURCE` | Trusted executable LTX image code: a local directory containing `modular_config.json` or a Hub repository. Defaults to the existing `modular_diffusers/custom_blocks/ltx2_image` clone under the examples root. |
+| `--custom-blocks SOURCE` | Trusted executable LTX image code: a local directory containing `modular_config.json` or a Hub repository. Defaults to the `elismasilva/ltx2.3_image_custom_blocks` Hub repository. |
 | `--custom-blocks-revision REVISION` | Optional Hub code revision; prefer a commit SHA. Rejected for local directories; does not switch a local Git branch. |
 | `--local-files-only` | Linear, SDNQ and VMM; default off. Require cached weights/code rather than downloading. |
 | `--device` | Execution device; default `cuda:0`. Does not establish support for other devices. |

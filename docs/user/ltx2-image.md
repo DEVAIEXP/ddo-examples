@@ -208,10 +208,11 @@ python -B scripts/ltx2_image/run_dynamic_modular_vmm_distilled.py `
 ```
 
 The LTX image runners accept `--custom-blocks SOURCE` and
-`--custom-blocks-revision REVISION`. Omitted source preserves the existing local
-`modular_diffusers/custom_blocks/ltx2_image` clone. To select Hub code, use
-`--custom-blocks elismasilva/ltx2.3_image_custom_blocks` and optionally a reviewed
-commit revision. These select executable code, not weights; use trusted sources.
+`--custom-blocks-revision REVISION`. Omitted source loads the trusted Hub code
+from `elismasilva/ltx2.3_image_custom_blocks`; add a reviewed commit revision to
+pin it. To use a local checkout, such as the
+`modular_diffusers/custom_blocks/ltx2_image` clone, pass its folder instead.
+These select executable code, not weights; use trusted sources.
 A revision applies only to Hub code, not a local clone. See the
 [parameter inventory](ltx2-image-parameters.md) for loading and report semantics.
 
