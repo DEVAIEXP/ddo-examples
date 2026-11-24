@@ -7,6 +7,8 @@ import pytest
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
+# Components each runner loads through DDO with an explicit, fork-free class.
+EXPLICIT_LOADERS = {"Gemma3ForConditionalGeneration", "LTX2ImageTransformer2DModel", "AutoencoderKLLTX2Video"}
 
 
 @pytest.mark.parametrize(
@@ -26,26 +28,20 @@ def test_image_runners_select_custom_transformer(runner):
         and isinstance(node.func, ast.Name)
         and node.func.id == "from_pretrained_with_dynamic_offload"
     ]
-    transformer_calls = [
-        node
-        for node in calls
-        if not any(
-            kw.arg == "model_loader"
-            and isinstance(kw.value, ast.Name)
-            and kw.value.id == "Gemma3ForConditionalGeneration"
-            for kw in node.keywords
-        )
-    ]
-    assert transformer_calls
-    for node in transformer_calls:
-        loaders = [kw.value for kw in node.keywords if kw.arg == "model_loader"]
-        assert len(loaders) == 1
-        assert isinstance(loaders[0], ast.Name)
-        assert loaders[0].id == "LTX2ImageTransformer2DModel"
+    loaders = []
+    for node in calls:
+        selected = [kw.value for kw in node.keywords if kw.arg == "model_loader"]
+        assert len(selected) == 1 and isinstance(selected[0], ast.Name)
+        loaders.append(selected[0].id)
+    assert set(loaders) <= EXPLICIT_LOADERS
+    assert "LTX2ImageTransformer2DModel" in loaders
 
 
 def test_saved_custom_checkpoint_loads_without_auto_model(tmp_path, monkeypatch):
     import diffusers
+
+    # Scoped to this test so collection does not expose the clones as plain packages.
+    monkeypatch.syspath_prepend(str(ROOT / "modular_diffusers"))
     from custom_blocks.ltx2_image.transformer_ltx2_image import LTX2ImageTransformer2DModel
     from diffusers_dynamic_offloader import from_pretrained_with_dynamic_offload
 

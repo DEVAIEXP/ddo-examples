@@ -145,18 +145,55 @@ def test_linear_video_preset_and_ceiling_are_distinct(preset, ceiling, expected,
     print_linear_memory_policy(settings)
     output = capsys.readouterr().out
     assert f"effective={expected}" in output
-    assert ("ceiling is not a target" if policy == "balanced" else "fixed resident-module budget=3.00 GiB") in output
+    assert ("ceiling is not a target" if policy == "balanced" else
+            "initial configuration (before workload profile): resident-module budget=3.00 GiB") in output
+
+
+LIFECYCLE_PHASES = ("before_run", "after_text_encoder", "before_transformer", "after_run")
+# Validated exceptions to the shared four-phase, preset-decided (None) lifecycle.
+LIFECYCLE_EXCEPTIONS = {
+    "ltx2_image/run_diffusers_leaf.py": (("before_run", "before_transformer"), False),
+    "ltx2_video/run_diffusers_leaf.py": ((), None),
+    "ltx2_video/run_dynamic_modular_sdnq_distilled.py": (LIFECYCLE_PHASES, False),
+    "qwen_image_21/run_diffusers_leaf.py": (("before_run", "before_transformer", "after_run"), None),
+    "qwen_image_21/run_dynamic_modular_sdnq.py": (LIFECYCLE_PHASES, False),
+}
+PURGE_BEFORE_VAE = {"ltx2_image/run_dynamic_modular_distilled.py", "ltx2_video/run_dynamic_modular_distilled.py"}
+
+
+def exposed_purge_phases(path, monkeypatch):
+    """Return the purge destinations a runner's real parser exposes."""
+    exposed = set()
+    original_parse = argparse.ArgumentParser.parse_args
+
+    def inspect_options(parser, *args, **kwargs):
+        exposed.update(action.dest for action in parser._actions
+                       if any(option.startswith("--purge-") for option in action.option_strings))
+        return original_parse(parser, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(argparse.ArgumentParser, "parse_args", inspect_options)
+        patch.setattr(sys, "argv", [str(path)])
+        defaults = parser_body(path)()
+    return exposed, defaults
 
 
 @pytest.mark.parametrize("path", RUNNERS, ids=lambda path: str(path.relative_to(ROOT)))
-def test_every_runner_accepts_the_same_explicit_lifecycle_switches(path, monkeypatch):
-    function = parser_body(path)
-    monkeypatch.setattr("sys.argv", [str(path), "--purge-before-transformer", "--no-purge-after-run"])
-    args = function()
-    assert args.purge_before_transformer is True
-    assert args.purge_after_run is False
-    assert args.purge_before_run is None
-    assert getattr(args, "purge_after_text_encoder", None) is None
+def test_every_runner_exposes_its_validated_lifecycle_switches(path, monkeypatch):
+    key = path.relative_to(ROOT / "scripts").as_posix()
+    phases, default = LIFECYCLE_EXCEPTIONS.get(key, (LIFECYCLE_PHASES, None))
+    exposed, defaults = exposed_purge_phases(path, monkeypatch)
+    expected = {"purge_" + phase for phase in phases} | ({"purge_before_vae"} if key in PURGE_BEFORE_VAE else set())
+    assert exposed == expected
+    for phase in phases:
+        assert getattr(defaults, "purge_" + phase) is default
+    if key in PURGE_BEFORE_VAE:
+        assert defaults.purge_before_vae is False
+    for phase in phases:
+        flag = "--purge-" + phase.replace("_", "-")
+        for argv, value in (([flag], True), (["--no-" + flag[2:]], False)):
+            monkeypatch.setattr(sys, "argv", [str(path), *argv])
+            assert getattr(parser_body(path)(), "purge_" + phase) is value
 
 
 @pytest.mark.parametrize("path", RUNNERS, ids=lambda path: str(path.relative_to(ROOT)))
@@ -300,11 +337,28 @@ def test_linear_profile_invalid_requests_fail_before_model_loading(path, argumen
 
 # The native VMM entries (image and video) expose --ddo-profile for the VMM
 # residency profile (tests/test_image_vmm_profile_cpu.py, test_vmm_profile_cpu.py).
-@pytest.mark.parametrize("path", [PUBLIC_LTX_LINEAR[1], *PUBLIC_VIDEO[::2]])
+@pytest.mark.parametrize("path", [PUBLIC_VIDEO[0]])
 def test_profile_restoration_does_not_expose_other_routes(path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [str(path), "--ddo-profile", "name"])
     with pytest.raises(SystemExit):
         parser_body(path)()
+
+
+SDNQ_RUNNERS = [PUBLIC_LTX_LINEAR[1], PUBLIC_VIDEO[2], PUBLIC_QWEN_OTHER[2]]
+
+
+@pytest.mark.parametrize("path", SDNQ_RUNNERS)
+def test_sdnq_runners_build_and_validate_their_own_capacity_profile(path, monkeypatch):
+    for arguments, build, validate in ((["--ddo-profile", "sdnq", "--build-ddo-profile"], True, False),
+                                       (["--ddo-profile", "sdnq", "--validate-ddo-profile"], False, True)):
+        monkeypatch.setattr(sys, "argv", [str(path), *arguments])
+        args = parser_body(path)()
+        assert (args.ddo_profile, args.build_ddo_profile, args.validate_ddo_profile) == ("sdnq", build, validate)
+    for arguments in (["--validate-ddo-profile"],
+                      ["--ddo-profile", "sdnq", "--build-ddo-profile", "--validate-ddo-profile"]):
+        monkeypatch.setattr(sys, "argv", [str(path), *arguments])
+        with pytest.raises(SystemExit):
+            parser_body(path)()
 
 
 @pytest.mark.parametrize("path", LINEAR_PROFILE_RUNNERS)
@@ -319,10 +373,18 @@ def test_linear_profile_wiring_and_decode_boundary(path):
     namespace = dict(args=args, name="transformer")
     for keyword, expected in (("profile_name", "same-profile"), ("build_profile", True)):
         assert eval(compile(ast.Expression(keywords[keyword]), str(path), "eval"), namespace) == expected
+    def profile_run_call(node):
+        return any(isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+                   and child.func.attr == "profile_run" for child in ast.walk(node))
+
+    # The session may be opened directly, through a Leaf/DDO conditional or
+    # through a name bound to the profile_run() result.
+    profile_names = {target.id for node in ast.walk(tree) if isinstance(node, ast.Assign) and profile_run_call(node.value)
+                     for target in node.targets if isinstance(target, ast.Name)}
     sessions = [node for node in ast.walk(tree) if isinstance(node, ast.With)
-                and any(isinstance(item.context_expr, ast.Call)
-                        and isinstance(item.context_expr.func, ast.Attribute)
-                        and item.context_expr.func.attr == "profile_run" for item in node.items)]
+                and any(profile_run_call(item.context_expr)
+                        or isinstance(item.context_expr, ast.Name) and item.context_expr.id in profile_names
+                        for item in node.items)]
     assert len(sessions) == 1
     assert any(isinstance(node, ast.Call) and (
         isinstance(node.func, ast.Name) and node.func.id in ("denoise_pipe", "denoise", "run_stage")
@@ -398,8 +460,10 @@ def test_public_native_help_options_have_documentation(path, monkeypatch, capsys
         parser_body(path)()
     assert result.value.code == 0
     capsys.readouterr()
-    positive = {"--" + option[5:] if option.startswith("--no-") else option for option in exposed}
-    missing = positive - set(re.findall(r"--[a-z][a-z0-9-]*", documented))
+    tokens = set(re.findall(r"--[a-z][a-z0-9-]*", documented))
+    # A negative switch is documented by its own name or, when it has one, by its positive form.
+    missing = {option for option in exposed
+               if option not in tokens and not (option.startswith("--no-") and "--" + option[5:] in tokens)}
     assert not missing, sorted(missing)
 
 

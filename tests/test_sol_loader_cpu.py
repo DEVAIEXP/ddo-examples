@@ -86,6 +86,7 @@ def test_every_public_video_entry_uses_shared_attention_or_shared_entry(entry):
     imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     assert ('scripts.helpers.ltx2.video_self_attention' in imports
             or 'scripts.ltx2_video.run_dynamic_modular_distilled' in imports
+            or 'scripts.ltx2_video.run_dynamic_modular_vmm_distilled' in imports
             or 'scripts.ltx2_video.run_dynamic_modular_diagnostics_distilled' in imports)
 
 

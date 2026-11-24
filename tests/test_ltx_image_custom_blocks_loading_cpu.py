@@ -1,6 +1,7 @@
 """Trusted LTX code-source selection without models, downloads or CUDA."""
 
 import ast
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -121,9 +122,19 @@ def test_real_local_custom_code_loads_without_cuda(tmp_path, monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(huggingface_hub, "snapshot_download", forbid)
     monkeypatch.setattr(dynamic, "HF_MODULES_CACHE", str(tmp_path / "modules"))
+    # Diffusers appends the module cache to sys.path; restore it after the test.
+    monkeypatch.setattr(sys, "path", list(sys.path))
     if not (loader.LOCAL_CHECKOUT / "modular_config.json").is_file():
         pytest.skip("The optional local LTX image custom-block checkout is not prepared.")
-    module, metadata = loader.load_custom_blocks(arguments(loader.LOCAL_CHECKOUT))
-    assert all(hasattr(module, name) for name in loader.REQUIRED_EXPORTS)
-    assert metadata["source"] == "local"
-    assert not torch.cuda.is_initialized()
+    before = set(sys.modules)
+    try:
+        module, metadata = loader.load_custom_blocks(arguments(loader.LOCAL_CHECKOUT))
+        assert all(hasattr(module, name) for name in loader.REQUIRED_EXPORTS)
+        assert metadata["source"] == "local"
+        assert not torch.cuda.is_initialized()
+    finally:
+        # Dynamic modules registered from the temporary cache must not shadow
+        # later loads of other local custom blocks in the same process.
+        for name in set(sys.modules) - before:
+            if name.startswith("diffusers_modules"):
+                del sys.modules[name]

@@ -86,9 +86,11 @@ def test_cleanup_runs_after_retirement_before_decode_and_skips_calibration():
     calibration = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
                        and isinstance(node.test, ast.Attribute) and node.test.attr == "build_ddo_profile"
                        and any(isinstance(x, ast.Return) for x in node.body))
-    decode = next(node for node in calls if isinstance(node.func, ast.Attribute)
+    # Decode runs as per-component phases: load_decode_<name>, decode_<name>, then save_video.
+    decode = min((node for node in calls if isinstance(node.func, ast.Attribute)
                   and node.func.attr == "step_start" and node.args
-                  and isinstance(node.args[0], ast.Constant) and node.args[0].value == "decode_and_save")
+                  and isinstance(node.args[0], ast.BinOp) and isinstance(node.args[0].left, ast.Constant)
+                  and node.args[0].left.value == "load_decode_"), key=lambda node: node.lineno)
     assert retire.lineno < calibration.lineno < release.lineno < decode.lineno
 
 

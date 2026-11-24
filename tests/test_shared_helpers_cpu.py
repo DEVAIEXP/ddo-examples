@@ -20,7 +20,10 @@ class SharedContracts(unittest.TestCase):
         for model in ("ltx2_image", "ltx2_video"):
             self.assertFalse((ROOT / "scripts" / model / "inference_utils.py").exists())
         for path in (ROOT / "scripts/ltx2_image").glob("run_*.py"):
-            self.assertIn("from scripts.helpers.inference_utils import", path.read_text())
+            source = path.read_text()
+            # Thin entries delegate to a runner that owns the shared metrics import.
+            delegated = "from scripts.ltx2_image.run_dynamic_modular_distilled import main" in source
+            self.assertTrue(delegated or "from scripts.helpers.inference_utils import" in source, path.name)
         for runner in (minimal, linear, native, diagnostics):
             self.assertIn("from scripts.helpers.inference_utils import", Path(runner.__file__).read_text())
         self.assertTrue(callable(metrics.release_pinned_host_cache))
@@ -74,9 +77,11 @@ class SharedContracts(unittest.TestCase):
         self.assertEqual(native.describe_plan(args)["effective_preset"], "vmm_fast")
         legacy = diagnostics.parse_args(["--dry-run", "--ddo-backend", "vmm"])
         self.assertFalse(legacy.release_pytorch_host_cache_before_vae)
-        self.assertFalse(hasattr(args, "release_pytorch_host_cache_before_vae"))
+        diagnostic_only = {"release_pytorch_host_cache_before_vae", "trace_pool_failure"}
+        for name in diagnostic_only:
+            self.assertFalse(hasattr(args, name), name)
         for name, value in vars(legacy).items():
-            if name not in {"runner_entrypoint", "release_pytorch_host_cache_before_vae"}:
+            if name not in {"runner_entrypoint", *diagnostic_only}:
                 self.assertEqual(getattr(args, name), value, name)
         with self.assertRaises(SystemExit):
             native.parse_args(["--compile-repeated-blocks"])

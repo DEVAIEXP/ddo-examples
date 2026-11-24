@@ -40,8 +40,8 @@ def test_default_sources_do_not_select_local_ddo():
     assert not any("path" in source or "editable" in source for source in sources.values())
     assert sources["torch"]["index"] == "pytorch-cu132"
     assert sources["torchaudio"] == {"index": "pytorch-cpu", "marker": "sys_platform == 'linux'"}
-    assert "diffusers-dynamic-offloader[vmm]==0.1.0rc2" in metadata["project"]["dependencies"]
-    assert "ddo-vmm-allocator==0.1.0rc2" in metadata["project"]["dependencies"]
+    assert "diffusers-dynamic-offloader[vmm]==0.1.0rc5" in metadata["project"]["dependencies"]
+    assert "ddo-vmm-allocator==0.1.0rc5" in metadata["project"]["dependencies"]
 
 
 def test_constraints_preserve_core_versions_without_ddo_source_bindings():
