@@ -31,13 +31,11 @@ calibration, command startup and downloads. Peaks cover the full tracked run.
 and scheduler work, rather than an isolated transformer-forward kernel timer.
 The Leaf, linear and VMM Fast runtime rows monitor denoising independently inside
 the generation aggregate, excluding connector setup and transformer cleanup.
-Other observations with only a call timer retain N/A for separate memory peaks.
 
 **VAE decode** excludes VAE loading, attachment, cleanup and PNG saving. Conversion
-performed inside the recorded decode call remains included. Where only a
-decode-call timer exists, latency is shown and its separate memory peaks remain
-N/A. No phase is estimated by subtraction and
-no aggregate or full-run peak is substituted for a narrower phase peak.
+performed inside the recorded decode call remains included. No phase is
+estimated by subtraction and no aggregate or full-run peak is substituted for a
+narrower phase peak.
 
 Average divides denoise wall latency by the recipe steps, retaining the same
 warmup/readback scope. Detailed setup and output phases are available in the
@@ -401,7 +399,7 @@ This comparison does not assess INT4 quality against BF16. See the
 `low_ram_safe` did not have the lowest global RSS in the Windows comparison.
 No selected row certifies a low-system-RAM machine.
 
-Single observations, not statistical or arbitrary-model guarantees. Missing
-measurements are unavailable, not zero; phase peaks must not be summed.
+Single observations, not statistical or arbitrary-model guarantees. Phase peaks
+must not be summed.
 See [presets](../user/presets.md), [reproduction](reproduction.md) and
 [measurement details](ltx23-image-details.md) before comparing different recipes.

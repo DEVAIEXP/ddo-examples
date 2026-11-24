@@ -36,9 +36,8 @@ values are preserved and are not relabelled as the narrower interval.
 uses only the recorded `decode_video` interval, excluding VAE loading/cleanup,
 audio decoding and file saving. Output conversion performed inside that interval
 remains included: these records are phase latency, not a pure VAE-kernel timer.
-Each phase's memory columns cover its own interval. N/A means that an unambiguous
-phase record was unavailable in the reviewed artifacts; global peaks and combined
-decode-and-save timings are never substituted for missing phase measurements.
+Each phase's memory columns cover its own interval; global peaks and combined
+decode-and-save timings are never substituted for a phase measurement.
 
 ## Windows — BF16, 8-second pressure workload
 
@@ -420,7 +419,7 @@ These single observations establish no material VRAM or speed advantage. See the
 `low_ram_safe` peaked at 42.42 GiB RSS in the Windows 8-second workload.
 Capacity and performance depend on the workload and available memory.
 
-Single observations, not statistical or arbitrary-model guarantees. Missing
-measurements are unavailable, not zero; phase peaks must not be summed.
+Single observations, not statistical or arbitrary-model guarantees. Phase peaks
+must not be summed.
 See [presets](../user/presets.md), [reproduction](reproduction.md) and
 [measurement details](ltx23-video-details.md) before comparing different recipes.

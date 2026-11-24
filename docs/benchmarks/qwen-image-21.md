@@ -23,9 +23,8 @@ interval covers the sampling loop, including the scheduler and callbacks.
 Both use their own monitored phase peaks, without added CUDA synchronization.
 
 **VAE decode** excludes VAE loading, attachment, cleanup and PNG saving. Conversion
-performed inside the recorded decode call remains included. Where only a
-decode-call timer exists, latency is shown and its separate memory peaks remain
-N/A. Windows official Leaf decode includes latent preparation and image
+performed inside the recorded decode call remains included. Windows official
+Leaf decode includes latent preparation and image
 postprocessing, but excludes pipeline cleanup and saving. Linux and WSL Leaf runs record denoise and decode separately. The WSL
 recipe also performs a synchronized cache cleanup between those phases. No phase is estimated by subtraction and
 no aggregate or full-run peak is substituted for a narrower phase peak.
