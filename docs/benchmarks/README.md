@@ -27,8 +27,7 @@ recommendations remain with each platform's feature results.
 
 Selected RC5 observations on an **RTX 3060 Ti 8 GiB / 64 GiB RAM**, using
 NVIDIA driver **617.42** and default PyTorch SDPA. Rows are selected individual
-runs. The Qwen Leaf control followed a manual Windows standby cache purge;
-its runner purge controls were disabled. Preset names identify the
+runs. Preset names identify the
 transformer preset: `one_shot_fast` and `low_ram_safe` use `linear_runtime`,
 `vmm_fast` uses `vmm_fast_runtime`, and `nvme_baseline` uses `vmm_runtime`.
 The dedicated official Leaf control uses Diffusers hooks; its equivalent DDO
@@ -115,16 +114,15 @@ isolated decoder measurements.
 
 | Preset | Denoise (s) | Average (s/step) | VAE decode (s) | Full run latency (s) | Full run peak GPU (absolute, GiB) | Full run peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.62 | 4.38 | 5.59 | 107.66 | 8.00 | 35.50 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 53.82&nbsp;🟢&nbsp;↓ | 2.69&nbsp;🟢&nbsp;↓ | 2.61&nbsp;🟢&nbsp;↓ | 66.08&nbsp;🟢&nbsp;↓ | 8.00 | 21.85&nbsp;🟢&nbsp;↓ |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 65.53&nbsp;🟢&nbsp;↓ | 3.28&nbsp;🟢&nbsp;↓ | 5.46&nbsp;🟢&nbsp;↓ | 85.58&nbsp;🟢&nbsp;↓ | 8.00 | 27.03&nbsp;🟢&nbsp;↓ |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 64.86&nbsp;🟢&nbsp;↓ | 3.24&nbsp;🟢&nbsp;↓ | 5.31&nbsp;🟢&nbsp;↓ | 76.77&nbsp;🟢&nbsp;↓ | 8.00 | 18.97&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.81 | 4.39 | 2.16 | 104.66 | 8.00 | 18.97 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 53.82&nbsp;🟢&nbsp;↓ | 2.69&nbsp;🟢&nbsp;↓ | 2.61&nbsp;🔴&nbsp;↑ | 66.08&nbsp;🟢&nbsp;↓ | 8.00 | 21.85&nbsp;🔴&nbsp;↑ |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 65.53&nbsp;🟢&nbsp;↓ | 3.28&nbsp;🟢&nbsp;↓ | 5.46&nbsp;🔴&nbsp;↑ | 85.58&nbsp;🟢&nbsp;↓ | 8.00 | 27.03&nbsp;🔴&nbsp;↑ |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 64.86&nbsp;🟢&nbsp;↓ | 3.24&nbsp;🟢&nbsp;↓ | 5.31&nbsp;🔴&nbsp;↑ | 76.77&nbsp;🟢&nbsp;↓ | 8.00 | 18.97 |
 | [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | 49.66&nbsp;🟢&nbsp;↓ | 2.48&nbsp;🟢&nbsp;↓ | 1.52&nbsp;🟢&nbsp;↓ | 60.05&nbsp;🟢&nbsp;↓ | 8.00 | 18.17&nbsp;🟢&nbsp;↓ |
 
 Base BF16, seed 42 and guidance 1, without model-specific optimizations,
-including single-frame VAE decode. The Leaf row is one standalone run after a
-manual standby cache purge, with no purge requested by the runner; the other
-rows use no standby purge. VMM Fast uses a native
+including single-frame VAE decode, and no standby purge. The Leaf control runs
+the same staged custom-block phases as the DDO rows. VMM Fast uses a native
 encoder and BF16 native VAE; the other rows use Leaf for both. See the
 [Qwen runtime results](qwen-image-21.md#windows-10241024-bf16-runtime-control)
 and [phase measurements](qwen-image-21-phases.md#windows-10241024-bf16-runtime-control).
@@ -139,8 +137,8 @@ Native Linux, WSL, lower-RAM, VAE-route and quantization comparisons remain in
 their separate groups. [Hardware and environment limits](hardware.md).
 
 The [Linux Qwen 1024-square Leaf control](qwen-image-21.md#linux-10241024-bf16-runtime-control)
-took 70.85 s with PyTorch expandable segments enabled, reaching 7.46 GiB
-absolute GPU usage and 33.66 GiB process RSS.
+took 70.23 s with PyTorch expandable segments enabled, reaching 7.36 GiB
+absolute GPU usage and 19.08 GiB process RSS.
 With the same allocator configuration, Linux Qwen `one_shot_fast` took
 67.51 s and reached 21.51 GiB peak RSS. Low RAM Safe took 71.60 s and
 reached 22.41 GiB peak RSS. All three PNGs were byte-identical.
@@ -173,7 +171,7 @@ details describe its workload, component routes and comparison limits.
 | Lower process RAM for Windows video | `vmm_fast` has the lowest peak process RSS in the 8-second runtime comparison at 33.08 GiB. | [Video Windows](ltx23-video.md#windows-bf16-8-second-pressure-workload) |
 | Decoder capacity | Prefer the measured component route for the workload. A resident VAE can avoid weight transfers when it fits; Leaf offload and supported tiling are alternatives under memory pressure. Weight offloading does not eliminate activation memory. Video defaults to exact-streaming decode; tiling is an explicit fallback. | [Image phases](ltx23-image-phases.md), [Video decoder controls](../user/ltx2-video-parameters.md), [Qwen routes](qwen-image-21.md) |
 | FP8 weight-only | In the recorded precision pairs, Windows took 424.02 s versus its original BF16 reference of 390.85 s (+8.5%); Linux took 357.04 s versus 325.78 s (+9.6%). Peak RSS fell by 12.7% and 17.5%, respectively; absolute GPU peaks were effectively unchanged. The Windows percentage does not use the newer 384.23 s runtime control. Windows visual quality was user-accepted; Linux visual review is pending. | [Video FP8 measurements](ltx23-video.md#saved-fp8) |
-| WSL | LTX Image VMM Fast and `wsl_compat` took 286.57 s and 330.23 s versus 464.88 s for official Leaf, with identical PNGs and more peak GPU memory. LTX Image cuDNN and FlashAttention 2 denoised in 76.45 s and 79.86 s versus 83.87 s for SDPA; sequential WSL variation limits this comparison. The current LTX Video VMM Fast SDPA control took 700.53 s versus 883.64 s for Leaf and 1960.70 s for `wsl_compat`, across separate configurations/sessions. In the matched VMM Fast attention pair, Sol took 600.55 s overall and 359.22 s to denoise versus 700.53 s and 461.95 s for SDPA, with user-accepted visual quality. Qwen VMM Fast and `wsl_compat` took 220.29 s and 226.38 s versus 420.09 s for Leaf, with the same absolute GPU peak. Qwen cuDNN SDPA took 8.34 s longer than its SDPA control. | [LTX Image WSL](ltx23-image.md#wsl-bf16), [video WSL](ltx23-video.md#wsl-bf16), [Qwen WSL](qwen-image-21.md#wsl-10241024-bf16-runtime-control) |
+| WSL | LTX Image VMM Fast and `wsl_compat` took 286.57 s and 330.23 s versus 464.88 s for official Leaf, with identical PNGs and more peak GPU memory. LTX Image cuDNN and FlashAttention 2 denoised in 76.45 s and 79.86 s versus 83.87 s for SDPA; sequential WSL variation limits this comparison. The current LTX Video VMM Fast SDPA control took 700.53 s versus 883.64 s for Leaf and 1960.70 s for `wsl_compat`, across separate configurations/sessions. In the matched VMM Fast attention pair, Sol took 600.55 s overall and 359.22 s to denoise versus 700.53 s and 461.95 s for SDPA, with user-accepted visual quality. Qwen VMM Fast and `wsl_compat` took 220.29 s and 226.38 s versus 407.83 s for Leaf, with the same absolute GPU peak. Qwen cuDNN SDPA took 8.34 s longer than its SDPA control. | [LTX Image WSL](ltx23-image.md#wsl-bf16), [video WSL](ltx23-video.md#wsl-bf16), [Qwen WSL](qwen-image-21.md#wsl-10241024-bf16-runtime-control) |
 
 These are single workload observations, not causal allocator-only or low-RAM
 hardware guarantees. Text encoding can dominate global RAM even when denoise RAM

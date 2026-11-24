@@ -36,20 +36,18 @@ linked phase measurements; nested intervals must not be added to their aggregate
 ## Windows 1024×1024 — BF16 runtime control
 
 Qwen Image 2.1 Base BF16, 20 steps, seed 42, default SDPA, and NVIDIA driver
-617.42. The Leaf control is one standalone run after a manual Windows standby
-cache purge; the runner's purge controls were disabled. The other rows use no
-standby purge. This difference in initial conditions limits causal comparisons.
-Every value for Leaf comes from that same run. Its generation aggregate includes
-text encoding, denoising and VAE decode; the latter two are also measured separately.
+617.42, with no standby purge. The Leaf control runs the same staged custom-block
+phases as the other rows, with official Diffusers leaf offload on each component;
+every Leaf value comes from one run.
 
 #### Full run
 
 | Preset | Transformer runtime | Text encoder route | VAE route | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 107.66 | 8.00 | 35.50 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | linear_runtime | Leaf | Leaf | 66.08&nbsp;🟢&nbsp;↓ | 8.00 | 21.85&nbsp;🟢&nbsp;↓ |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | linear_runtime | Leaf | Leaf | 85.58&nbsp;🟢&nbsp;↓ | 8.00 | 27.03&nbsp;🟢&nbsp;↓ |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | vmm_runtime | Leaf | Leaf | 76.77&nbsp;🟢&nbsp;↓ | 8.00 | 18.97&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 104.66 | 8.00 | 18.97 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | linear_runtime | Leaf | Leaf | 66.08&nbsp;🟢&nbsp;↓ | 8.00 | 21.85&nbsp;🔴&nbsp;↑ |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | linear_runtime | Leaf | Leaf | 85.58&nbsp;🟢&nbsp;↓ | 8.00 | 27.03&nbsp;🔴&nbsp;↑ |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | vmm_runtime | Leaf | Leaf | 76.77&nbsp;🟢&nbsp;↓ | 8.00 | 18.97 |
 | [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | vmm_fast_runtime | Native VMM | Native VMM | 60.05&nbsp;🟢&nbsp;↓ | 8.00 | 18.17&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | vmm_fast_runtime | Native VMM | Leaf | 62.70&nbsp;🟢&nbsp;↓ | 8.00 | 18.17&nbsp;🟢&nbsp;↓ |
 
@@ -57,21 +55,21 @@ text encoding, denoising and VAE decode; the latter two are also measured separa
 
 | Preset | Latency (s) | Average (s/step) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.62 | 4.38 | 3.29 | 32.94 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.81 | 4.39 | 2.13 | 16.99 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 53.82&nbsp;🟢&nbsp;↓ | 2.69&nbsp;🟢&nbsp;↓ | 6.99&nbsp;🔴&nbsp;↑ | 13.80&nbsp;🟢&nbsp;↓ |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 65.53&nbsp;🟢&nbsp;↓ | 3.28&nbsp;🟢&nbsp;↓ | 6.57&nbsp;🔴&nbsp;↑ | 27.03&nbsp;🟢&nbsp;↓ |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 65.53&nbsp;🟢&nbsp;↓ | 3.28&nbsp;🟢&nbsp;↓ | 6.57&nbsp;🔴&nbsp;↑ | 27.03&nbsp;🔴&nbsp;↑ |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 64.86&nbsp;🟢&nbsp;↓ | 3.24&nbsp;🟢&nbsp;↓ | 3.32&nbsp;🔴&nbsp;↑ | 6.00&nbsp;🟢&nbsp;↓ |
-| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | 49.66&nbsp;🟢&nbsp;↓ | 2.48&nbsp;🟢&nbsp;↓ | 2.45&nbsp;🟢&nbsp;↓ | 15.55&nbsp;🟢&nbsp;↓ |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | 50.35&nbsp;🟢&nbsp;↓ | 2.52&nbsp;🟢&nbsp;↓ | 2.45&nbsp;🟢&nbsp;↓ | 15.55&nbsp;🟢&nbsp;↓ |
+| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | 49.66&nbsp;🟢&nbsp;↓ | 2.48&nbsp;🟢&nbsp;↓ | 2.45&nbsp;🔴&nbsp;↑ | 15.55&nbsp;🟢&nbsp;↓ |
+| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | 50.35&nbsp;🟢&nbsp;↓ | 2.52&nbsp;🟢&nbsp;↓ | 2.45&nbsp;🔴&nbsp;↑ | 15.55&nbsp;🟢&nbsp;↓ |
 
 #### VAE decode
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 5.59 | 8.00 | 35.47 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 2.61&nbsp;🟢&nbsp;↓ | 8.00 | 15.20&nbsp;🟢&nbsp;↓ |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 5.46&nbsp;🟢&nbsp;↓ | 8.00 | 15.21&nbsp;🟢&nbsp;↓ |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 5.31&nbsp;🟢&nbsp;↓ | 8.00 | 7.68&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 2.16 | 8.00 | 4.74 |
+| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 2.61&nbsp;🔴&nbsp;↑ | 8.00 | 15.20&nbsp;🔴&nbsp;↑ |
+| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 5.46&nbsp;🔴&nbsp;↑ | 8.00 | 15.21&nbsp;🔴&nbsp;↑ |
+| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 5.31&nbsp;🔴&nbsp;↑ | 8.00 | 7.68&nbsp;🔴&nbsp;↑ |
 | [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | 1.52&nbsp;🟢&nbsp;↓ | 8.00 | 3.19&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | 1.95&nbsp;🟢&nbsp;↓ | 8.00 | 2.57&nbsp;🟢&nbsp;↓ |
 
@@ -110,8 +108,9 @@ See [phase measurements](qwen-image-21-phases.md#windows-bf16) for this workload
 ## Linux 1024×1024 — BF16 runtime control
 
 The RC5 runs use NVIDIA driver 615.71.09, Torch 2.12.1+cu132,
-Diffusers 0.41.0, default SDPA, and no standby purge. The Leaf control uses
-streamed official hooks for encoder and transformer. Leaf and linear runs
+Diffusers 0.41.0, default SDPA, and no standby purge. The Leaf control runs
+the same staged custom-block phases as the DDO rows, with streamed official
+hooks for encoder and transformer. Leaf and linear runs
 use Leaf for the untiled VAE and PyTorch `expandable_segments:True`.
 VMM Fast uses the native DDO allocator and native VMM encoder. Its two
 rows compare native VMM and Leaf VAE routes with the same transformer profile.
@@ -121,9 +120,9 @@ The output PNGs were byte-identical.
 
 | Preset | Transformer runtime | Text encoder route | VAE route | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 70.85 | 7.46 | 33.66 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | linear_runtime | Leaf | Leaf | 67.51&nbsp;🟢&nbsp;↓ | 7.52&nbsp;🔴&nbsp;↑ | 21.51&nbsp;🟢&nbsp;↓ |
-| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | linear_runtime | Leaf | Leaf | 71.60&nbsp;🔴&nbsp;↑ | 7.48&nbsp;🔴&nbsp;↑ | 22.41&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 70.23 | 7.36 | 19.08 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | linear_runtime | Leaf | Leaf | 67.51&nbsp;🟢&nbsp;↓ | 7.52&nbsp;🔴&nbsp;↑ | 21.51&nbsp;🔴&nbsp;↑ |
+| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | linear_runtime | Leaf | Leaf | 71.60&nbsp;🔴&nbsp;↑ | 7.48&nbsp;🔴&nbsp;↑ | 22.41&nbsp;🔴&nbsp;↑ |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | vmm_fast_runtime | Native VMM | Native VMM | 53.98&nbsp;🟢&nbsp;↓ | 7.58&nbsp;🔴&nbsp;↑ | 18.27&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | vmm_fast_runtime | Native VMM | Leaf | 57.58&nbsp;🟢&nbsp;↓ | 7.53&nbsp;🔴&nbsp;↑ | 18.27&nbsp;🟢&nbsp;↓ |
 
@@ -131,18 +130,18 @@ The output PNGs were byte-identical.
 
 | Preset | Latency (s) | Average (s/step) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 61.20 | 3.06 | 2.84 | 33.11 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 60.44 | 3.02 | 1.44 | 17.14 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 50.32&nbsp;🟢&nbsp;↓ | 2.52&nbsp;🟢&nbsp;↓ | 6.38&nbsp;🔴&nbsp;↑ | 13.97&nbsp;🟢&nbsp;↓ |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 56.22&nbsp;🟢&nbsp;↓ | 2.81&nbsp;🟢&nbsp;↓ | 6.34&nbsp;🔴&nbsp;↑ | 14.98&nbsp;🟢&nbsp;↓ |
-| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 44.11&nbsp;🟢&nbsp;↓ | 2.21&nbsp;🟢&nbsp;↓ | 2.06&nbsp;🟢&nbsp;↓ | 15.70&nbsp;🟢&nbsp;↓ |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | 47.19&nbsp;🟢&nbsp;↓ | 2.36&nbsp;🟢&nbsp;↓ | 2.14&nbsp;🟢&nbsp;↓ | 15.70&nbsp;🟢&nbsp;↓ |
+| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 44.11&nbsp;🟢&nbsp;↓ | 2.21&nbsp;🟢&nbsp;↓ | 2.06&nbsp;🔴&nbsp;↑ | 15.70&nbsp;🟢&nbsp;↓ |
+| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | 47.19&nbsp;🟢&nbsp;↓ | 2.36&nbsp;🟢&nbsp;↓ | 2.14&nbsp;🔴&nbsp;↑ | 15.70&nbsp;🟢&nbsp;↓ |
 
 #### VAE decode
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.61 | 7.30 | 33.66 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 1.47&nbsp;🟢&nbsp;↓ | 7.52&nbsp;🔴&nbsp;↑ | 15.15&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.54 | 7.36 | 5.07 |
+| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 1.47&nbsp;🟢&nbsp;↓ | 7.52&nbsp;🔴&nbsp;↑ | 15.15&nbsp;🔴&nbsp;↑ |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 1.47&nbsp;🟢&nbsp;↓ | 7.48&nbsp;🔴&nbsp;↑ | 2.95&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 1.36&nbsp;🟢&nbsp;↓ | 7.58&nbsp;🔴&nbsp;↑ | 3.29&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | 1.74&nbsp;🔴&nbsp;↑ | 7.53&nbsp;🔴&nbsp;↑ | 2.95&nbsp;🟢&nbsp;↓ |
@@ -191,22 +190,23 @@ SDPA was faster in this Linux comparison.
 All three runs use default SDPA, non-streamed Leaf for the encoder and VAE,
 and no standby purge. Each row is one complete run on an RTX 3060 Ti with
 NVIDIA driver `617.42`. The output PNGs were byte-identical. The official
-Leaf recipe uses `PYTORCH_ALLOC_CONF=expandable_segments:False` and a separate
-pre-decode cleanup; this recipe-local setting does not change other defaults.
+Leaf control runs the same staged custom-block phases as the DDO rows and uses
+`PYTORCH_ALLOC_CONF=expandable_segments:False`; this recipe-local setting does
+not change other defaults.
 
 #### Full run
 
 | Preset | Transformer runtime | Text encoder route | VAE route | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | --- | --- | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 420.09 | 8.00 | 37.82 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | official leaf hooks | Leaf | Leaf | 407.83 | 8.00 | 22.39 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | linear_runtime | Leaf | Leaf | 226.38&nbsp;🟢&nbsp;↓ | 8.00 | 22.38&nbsp;🟢&nbsp;↓ |
-| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | vmm_fast_runtime | Leaf | Leaf | 220.29&nbsp;🟢&nbsp;↓ | 8.00 | 22.40&nbsp;🟢&nbsp;↓ |
+| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | vmm_fast_runtime | Leaf | Leaf | 220.29&nbsp;🟢&nbsp;↓ | 8.00 | 22.40&nbsp;🔴&nbsp;↑ |
 
 #### Denoising
 
 | Preset | Latency (s) | Average (s/step) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 313.73 | 15.69 | 3.42 | 37.82 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 312.09 | 15.60 | 2.26 | 20.62 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 107.54&nbsp;🟢&nbsp;↓ | 5.38&nbsp;🟢&nbsp;↓ | 6.49&nbsp;🔴&nbsp;↑ | 15.36&nbsp;🟢&nbsp;↓ |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 110.31&nbsp;🟢&nbsp;↓ | 5.52&nbsp;🟢&nbsp;↓ | 7.61&nbsp;🔴&nbsp;↑ | 16.05&nbsp;🟢&nbsp;↓ |
 
@@ -214,8 +214,8 @@ pre-decode cleanup; this recipe-local setting does not change other defaults.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 5.10 | 8.00 | 33.04 |
-| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 5.39&nbsp;🔴&nbsp;↑ | 8.00 | 3.18&nbsp;🟢&nbsp;↓ |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 5.33 | 8.00 | 3.09 |
+| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 5.39&nbsp;🔴&nbsp;↑ | 8.00 | 3.18&nbsp;🔴&nbsp;↑ |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 2.81&nbsp;🟢&nbsp;↓ | 8.00 | 3.06&nbsp;🟢&nbsp;↓ |
 
 See [phase measurements](qwen-image-21-phases.md#wsl-bf16) for this workload.

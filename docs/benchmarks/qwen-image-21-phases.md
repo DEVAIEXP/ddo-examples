@@ -33,14 +33,14 @@ Text encoder aggregates include loading, attachment where applicable, encoding a
 
 ## Windows 1024×1024 — BF16 runtime control
 
-The Leaf row uses the same standalone run as the main comparison, after a
-manual Windows standby cache purge. Runner purge controls were disabled.
+The Leaf rows use the same staged run as the main comparison, with no standby
+purge. Collect phases report DDO metrics and do not exist for Leaf.
 
 ### Text encoder
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 12.29 | 2.28 | 18.97 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 4.83 | 2.28 | 18.97 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 11.02 | 3.41 | 22.32 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 4.06 | 2.28 | 18.97 |
@@ -51,7 +51,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.62 | 3.29 | 32.94 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 87.81 | 2.13 | 16.99 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 53.82 | 6.99 | 13.80 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 65.53 | 6.57 | 27.03 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 64.86 | 3.32 | 6.00 |
@@ -62,7 +62,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 5.59 | 8.00 | 35.47 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 2.16 | 8.00 | 4.74 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 2.61 | 8.00 | 15.20 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 5.46 | 8.00 | 15.21 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 5.31 | 8.00 | 7.68 |
@@ -75,55 +75,11 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 
 
-**Load pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 1.81 | 1.03 | 2.52 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Attach Leaf hooks**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.05 | 1.03 | 1.51 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Combined generation: encode/denoise/decode**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 104.41 | 8.00 | 35.47 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Cleanup pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 1.29 | 8.00 | 35.50 |
-| [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#windows-1024-vmm-fast-native-vae) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#windows-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
 **Save image**
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.09 | 1.10 | 4.56 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.10 | 1.10 | 4.67 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.10 | 1.10 | 14.69 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.10 | 2.23 | 14.37 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.09 | 1.10 | 6.62 |
@@ -134,7 +90,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.08 | 1.10 | 3.66 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.05 | 1.10 | 3.66 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.07 | 2.22 | 13.73 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.09 | 1.10 | 3.66 |
@@ -145,7 +101,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.03 | 1.10 | 3.67 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 3.99 | 6.00 | 21.85 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 1.70 | 5.57 | 18.16 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 1.23 | 1.50 | 5.91 |
@@ -156,7 +112,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.00 | 1.10 | 3.67 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.01 | 6.00 | 13.74 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.01 | 5.60 | 18.22 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.01 | 1.35 | 5.93 |
@@ -178,7 +134,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.70 | 2.13 | 16.98 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.15 | 6.94 | 13.80 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.74 | 6.55 | 27.03 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.13 | 3.32 | 6.00 |
@@ -189,7 +145,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.85 | 1.10 | 5.52 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.27 | 1.10 | 15.02 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.25 | 2.23 | 14.94 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.29 | 1.10 | 6.86 |
@@ -211,7 +167,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.18 | 8.00 | 4.82 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | 0.23 | 8.00 | 15.27 |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | 0.23 | 8.00 | 15.24 |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | 0.23 | 8.00 | 7.70 |
@@ -222,7 +178,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#windows-1024-leaf-control) | 0.02 | 1.10 | 4.36 |
 | [`one_shot_fast`](qwen-image-21-details.md#windows-1024-one-shot-fast) | N/A | N/A | N/A |
 | [`low_ram_safe`](qwen-image-21-details.md#windows-1024-low-ram-safe) | N/A | N/A | N/A |
 | [`nvme_baseline`](qwen-image-21-details.md#windows-1024-nvme-baseline) | N/A | N/A | N/A |
@@ -340,7 +296,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 6.10 | 1.71 | 19.08 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 6.42 | 1.87 | 19.09 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 11.31 | 1.84 | 22.41 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 5.10 | 3.04 | 18.27 |
@@ -350,7 +306,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 61.20 | 2.84 | 33.11 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 60.44 | 1.44 | 17.14 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 50.32 | 6.38 | 13.97 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 56.22 | 6.34 | 14.98 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 44.11 | 2.06 | 15.70 |
@@ -360,7 +316,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.61 | 7.30 | 33.66 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.54 | 7.36 | 5.07 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 1.47 | 7.52 | 15.15 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 1.47 | 7.48 | 2.95 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 1.36 | 7.58 | 3.29 |
@@ -372,51 +328,11 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 
 
-**Load pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.24 | 0.65 | 2.58 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Attach Leaf hooks**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.04 | 0.67 | 1.72 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Combined generation: encode/denoise/decode**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 67.90 | 7.30 | 33.66 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
-**Cleanup pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 1.23 | 7.46 | 33.66 |
-| [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | N/A | N/A | N/A |
-| [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | N/A | N/A | N/A |
-| [`vmm_fast` / Leaf VAE](qwen-image-21-details.md#linux-1024-vmm-fast-leaf) | N/A | N/A | N/A |
-
 **Save image**
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.43 | 0.72 | 4.15 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.41 | 0.52 | 4.13 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.55 | 0.70 | 14.21 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.41 | 0.66 | 1.96 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.41 | 6.85 | 1.99 |
@@ -426,7 +342,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.11 | 0.52 | 3.78 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.04 | 0.68 | 3.76 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.03 | 0.65 | 1.59 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.04 | 0.69 | 1.62 |
@@ -436,7 +352,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.01 | 0.52 | 3.78 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 7.25 | 5.60 | 21.51 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.59 | 4.83 | 5.78 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.75 | 0.69 | 3.94 |
@@ -446,7 +362,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.02 | 0.52 | 3.78 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.01 | 5.60 | 13.84 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.01 | 5.56 | 6.52 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.02 | 0.69 | 4.45 |
@@ -466,7 +382,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.48 | 1.44 | 17.14 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.26 | 6.38 | 13.97 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.66 | 6.34 | 14.98 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 1.16 | 2.06 | 15.70 |
@@ -476,7 +392,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.36 | 0.52 | 5.60 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.39 | 0.70 | 15.58 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.15 | 0.65 | 3.51 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.05 | 1.43 | 1.76 |
@@ -496,7 +412,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.34 | 7.28 | 5.07 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | 0.38 | 7.46 | 15.15 |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | 0.35 | 7.42 | 2.96 |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.24 | 7.18 | 3.31 |
@@ -506,7 +422,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#linux-1024-leaf-control) | 0.01 | 0.52 | 4.52 |
 | [`one_shot_fast`](qwen-image-21-details.md#linux-1024-one-shot-fast) | N/A | N/A | N/A |
 | [`low_ram_safe`](qwen-image-21-details.md#linux-1024-low-ram-safe) | N/A | N/A | N/A |
 | [`vmm_fast`](qwen-image-21-details.md#linux-1024-vmm-fast) | 0.33 | 1.43 | 2.75 |
@@ -624,7 +540,7 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 84.88 | 3.42 | 22.39 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 89.53 | 3.42 | 22.38 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 98.74 | 3.40 | 22.40 |
 
@@ -632,24 +548,15 @@ manual Windows standby cache purge. Runner purge controls were disabled.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 313.73 | 3.42 | 37.82 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 312.09 | 2.26 | 20.62 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 107.54 | 6.49 | 15.36 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 110.31 | 7.61 | 16.05 |
-
-### Cleanup before decode
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.13 | 3.42 | 32.49 |
-
-This Leaf-only interval performs garbage collection, CUDA synchronization and
-unused-cache release after sampling, outside both denoise and decode.
 
 ### VAE decode
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 5.10 | 8.00 | 33.04 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 5.33 | 8.00 | 3.09 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 5.39 | 8.00 | 3.18 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 2.81 | 8.00 | 3.06 |
 
@@ -659,43 +566,11 @@ unused-cache release after sampling, outside both denoise and decode.
 
 
 
-**Load pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 4.67 | 1.04 | 2.79 |
-| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | N/A | N/A | N/A |
-
-**Attach Leaf hooks**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.02 | 1.04 | 1.61 |
-| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | N/A | N/A | N/A |
-
-**Combined generation: encode/denoise/decode**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 412.84 | 8.00 | 37.82 |
-| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | N/A | N/A | N/A |
-
-**Cleanup pipeline**
-
-| Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
-| --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 2.04 | 8.00 | 33.04 |
-| [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | N/A | N/A | N/A |
-| [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | N/A | N/A | N/A |
-
 **Save image**
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.51 | 2.24 | 3.37 |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.45 | 2.24 | 3.09 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 0.46 | 2.24 | 3.18 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 0.45 | 7.07 | 3.06 |
 
@@ -703,7 +578,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.20 | 2.24 | 2.09 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 0.17 | 2.24 | 2.09 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 0.20 | 3.40 | 2.10 |
 
@@ -711,7 +586,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.01 | 2.24 | 2.10 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 18.09 | 5.61 | 6.59 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 2.59 | 3.41 | 3.01 |
 
@@ -719,7 +594,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.01 | 2.24 | 2.10 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 0.02 | 5.61 | 6.60 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 0.01 | 3.41 | 3.04 |
 
@@ -735,7 +610,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.93 | 2.26 | 15.35 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 1.51 | 6.49 | 15.36 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 1.36 | 7.59 | 16.05 |
 
@@ -743,7 +618,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 3.03 | 2.24 | 3.82 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 2.95 | 2.24 | 3.90 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 3.17 | 3.41 | 3.83 |
 
@@ -759,7 +634,7 @@ unused-cache release after sampling, outside both denoise and decode.
 
 | Preset | Latency (s) | Peak GPU (absolute, GiB) | Peak RAM (RSS, GiB) |
 | --- | ---: | ---: | ---: |
-| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | N/A | N/A | N/A |
+| [Official Diffusers Leaf](qwen-image-21-details.md#wsl-1024-leaf-control) | 0.39 | 8.00 | 3.09 |
 | [`wsl_compat`](qwen-image-21-details.md#wsl-1024-wsl-compat) | 0.20 | 8.00 | 3.18 |
 | [`vmm_fast`](qwen-image-21-details.md#wsl-1024-vmm-fast) | 0.12 | 7.07 | 3.06 |
 

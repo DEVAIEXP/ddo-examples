@@ -103,7 +103,7 @@ A phase label describes the measured interval, not just a model forward.
 | --- | --- |
 | LTX image | Monitored prompt phase: encoder/tokenizer loading, encoding and cleanup, including purge where it occurs inside that phase. Connectors are in the separate generate aggregate. |
 | LTX video | Staged text-encoder phase, including its loading/encoding/cleanup. Connectors and conditioning encoders are separate. |
-| Qwen | Text encoder aggregates combine the recorded load, attachment, encode and cleanup phases where available. An individual encode row excludes neighboring setup/cleanup. The standalone Leaf generation aggregate does not establish a separate encoder measurement. |
+| Qwen | Text encoder aggregates combine the recorded load, attachment, encode and cleanup phases where available. An individual encode row excludes neighboring setup/cleanup. The Leaf control records the same encoder phases as the DDO runners. |
 
 Do not compare these as identical pure-forward timers. Phase memory values are
 sampled within the named interval; they cannot be assigned to a smaller event

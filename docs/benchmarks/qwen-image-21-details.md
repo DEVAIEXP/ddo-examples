@@ -23,25 +23,26 @@ Use the dedicated official Diffusers Leaf runner via
 `benchmarks/run_benchmark.py --platform windows --recipe qwen-image21 --family runtime --case official-leaf`.
 The recipe uses the capybara prompt, guidance 1, the default KV cache and
 SDPA, streamed Leaf hooks for the encoder and transformer, non-streamed Leaf
-for the untiled VAE, and disabled runner purge controls. The selected standalone
-run followed a manual Windows standby cache purge; this initial condition differs
-from the other runtime observations. See [benchmark reproduction](reproduction.md)
+for the untiled VAE, and no standby purge. The runner follows the same staged
+custom-block phases as the DDO runners: the text encoder, transformer and VAE
+are each loaded, attached, run and released separately, with official Diffusers
+leaf-level offload on each component. See [benchmark reproduction](reproduction.md)
 for execution setup.
 
-On NVIDIA driver 617.42, the tracked total was 107.66 s, with full-run peaks
-of 8.00 GiB absolute GPU usage and 35.50 GiB process RSS. The sampling loop
-took 87.62 s (4.38 s/step), peaking at 3.29 GiB GPU and 32.94 GiB RSS.
-Decode took 5.59 s, peaking at 8.00 GiB GPU and 35.47 GiB RSS.
-All values come from this one run, whose PNG matched the other completed
-Leaf observations byte for byte.
+On NVIDIA driver 617.42 with the RC5 wheels, the tracked total was 104.66 s,
+with full-run peaks of 8.00 GiB absolute GPU usage and 18.97 GiB process RSS.
+Text encoder loading, attachment, encoding and cleanup took 12.29 s (encoding
+10.97 s), peaking at 2.28 GiB GPU and 18.97 GiB RSS. The sampling loop took
+87.81 s (4.39 s/step), peaking at 2.13 GiB GPU and 16.99 GiB RSS. Decode took
+2.16 s, peaking at 8.00 GiB GPU and 4.74 GiB RSS. All values come from this
+one run, whose PNG matched the earlier Leaf observations byte for byte.
 
-The conventional pipeline is preserved. Denoise is measured around its public
-sampling-loop boundary, including scheduler work and callbacks. Decode starts
-after the loop and includes latent preparation, VAE execution and image
-postprocessing; pipeline cleanup and PNG saving remain separate. The existing
-sampler supplies independent interval peaks without added CUDA synchronization.
-Text encoding is not independently measured and remains N/A. The generation
-aggregate contains these intervals and must not be added to them.
+Each component is released before the next one loads, so the RSS peaks are
+lower than the earlier run of the conventional pipeline, which kept every
+component loaded until the end. Denoise covers the sampling loop through CPU
+readback, including scheduler work and callbacks. Decode covers VAE execution
+and image postprocessing; VAE loading, attachment, cleanup and PNG saving are
+separate phases.
 
 <a id="windows-1024-one-shot-fast"></a>
 
@@ -137,20 +138,23 @@ Select `--platform linux --recipe qwen-image21 --family runtime
 The dedicated official Leaf runner uses the same checkpoint, capybara
 prompt, BF16, 1024×1024, 20 steps, seed 42, guidance 1 and default KV cache.
 Transformer joint attention uses default SDPA. Encoder and transformer
-use streamed Leaf hooks, and the untiled VAE uses non-streamed Leaf.
+use streamed Leaf hooks, and the untiled VAE uses non-streamed Leaf. The
+runner follows the same staged custom-block phases as the DDO runners, with
+official Diffusers leaf-level offload on each component.
 
 The manifest records `PYTORCH_ALLOC_CONF=expandable_segments:True` explicitly.
 The run completed all 20 steps and produced a verified 1024×1024 PNG,
 byte-identical to the other Linux runtime outputs. Full-run latency was
-70.85 s, with 7.46 GiB absolute GPU peak and 33.66 GiB process RSS peak.
-Denoise took 61.20 s (3.06 s/step), peaking at 2.84 GiB GPU and 33.11 GiB RSS.
-Decode took 1.61 s, peaking at 7.30 GiB GPU and 33.66 GiB RSS.
+70.23 s, with 7.36 GiB absolute GPU peak and 19.08 GiB process RSS peak.
+Text encoder loading, attachment, encoding and cleanup took 6.10 s (encoding
+5.07 s), peaking at 1.71 GiB GPU and 19.08 GiB RSS. Denoise took 60.44 s
+(3.02 s/step), peaking at 1.44 GiB GPU and 17.14 GiB RSS. Decode took 1.54 s,
+peaking at 7.36 GiB GPU and 5.07 GiB RSS.
 
-The dedicated official pipeline retains its sampling-loop boundary, scheduler
-and callbacks. Decode includes latent preparation and image postprocessing;
-pipeline cleanup and PNG saving are separate. Text encoding remains inside
-the generation aggregate and is not independently measured. No phase peak
-is substituted from the aggregate.
+Denoise covers the sampling loop through CPU readback, including scheduler
+work and callbacks. Decode covers VAE execution and image postprocessing; VAE
+loading, attachment, cleanup and PNG saving are separate phases. Each component
+is released before the next one loads.
 
 The environment uses installed DDO and allocator 0.1.0rc5, Torch
 2.12.1+cu132, Diffusers 0.41.0 and NVIDIA driver 615.71.09. Standby purge,
@@ -258,21 +262,21 @@ The benchmark controller starts `run_diffusers_leaf.py` with
 The run uses BF16, 20 steps, seed 42, guidance 1, the standard KV cache,
 and no VAE tiling or standby purge. The environment uses Diffusers `0.41.0`,
 Torch `2.12.1+cu132`, installed DDO and allocator RC5, and NVIDIA driver `617.42`.
-The runner applies official Diffusers hooks and uses no calibration profile.
-The selected direct runner execution completed all 20 steps and produced a
-verified 1024×1024 PNG, byte-identical to the other WSL runtime outputs.
+The runner follows the same staged custom-block phases as the DDO runners,
+with official Diffusers leaf-level offload on each component, and uses no
+calibration profile. The run completed all 20 steps and produced a verified
+1024×1024 PNG, byte-identical to the other WSL runtime outputs.
 It uses `PYTORCH_ALLOC_CONF=expandable_segments:False`; prefix a direct Bash
 runner command with that assignment. The benchmark controller applies this
 setting only to the WSL official Leaf runtime recipe. Shared defaults remain
-unchanged. Before decode, the runner performs a separately measured GC, CUDA
-synchronization and unused-cache cleanup, preserving live tensors.
+unchanged.
 
-The full run took 420.09 s, peaking at 8.00 GiB GPU and 37.82 GiB RSS.
-Denoise took 313.73 s (15.69 s/step), with 3.42 GiB GPU and 37.82 GiB RSS.
-Decode took 5.10 s, with 8.00 GiB GPU and 33.04 GiB RSS. The 0.13 s cleanup
-interval is excluded from both phase latencies and included in the full run.
-Text encoding remains part of the generation aggregate, not an independently
-measured encoder phase. No calibration profile is required.
+The full run took 407.83 s, peaking at 8.00 GiB GPU and 22.39 GiB RSS.
+Text encoder loading, attachment, encoding and cleanup took 84.88 s (encoding
+82.88 s), peaking at 3.42 GiB GPU and 22.39 GiB RSS. Denoise took 312.09 s
+(15.60 s/step), with 2.26 GiB GPU and 20.62 GiB RSS. Decode took 5.33 s, with
+8.00 GiB GPU and 3.09 GiB RSS. Each component is released before the next one
+loads; the transformer cleanup precedes VAE loading.
 
 <a id="wsl-1024-wsl-compat"></a>
 
