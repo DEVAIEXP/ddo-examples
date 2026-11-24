@@ -7,13 +7,29 @@ import tomllib
 ROOT = Path(__file__).parents[1]
 
 
-def test_flash_attention_is_optional_and_matches_windows_torch_stack():
+def test_flash_attention_is_optional_and_matches_each_platform_torch_stack():
+    from packaging.requirements import Requirement
+
     metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert not any(dep.startswith("flash-attn") for dep in metadata["project"]["dependencies"])
-    requirements = metadata["project"]["optional-dependencies"]["flash-attn"]
-    assert len(requirements) == 1
-    assert "flash_attn-2.9.1%2Bcu132torch2.12.1cxx11abiTRUE-cp312-cp312-win_amd64.whl" in requirements[0]
-    assert "sys_platform == 'win32' and python_version == '3.12'" in requirements[0]
+    requirements = [Requirement(line) for line in metadata["project"]["optional-dependencies"]["flash-attn"]]
+    release = "https://github.com/DEVAIEXP/ddo-examples/releases/download/flash-attn-2.8.3-torch2.12.1-cu132-cp312/"
+    environments = {
+        "flash_attn-2.9.1%2Bcu132torch2.12.1cxx11abiTRUE-cp312-cp312-win_amd64.whl":
+            {"sys_platform": "win32", "platform_machine": "AMD64", "platform_release": "10"},
+        "flash_attn-2.8.3.post2-cp312-cp312-linux_x86_64.whl":
+            {"sys_platform": "linux", "platform_machine": "x86_64",
+             "platform_release": "6.18.33.2-microsoft-standard-WSL2"},
+        "flash_attn-2.8.3-cp312-cp312-linux_x86_64.whl":
+            {"sys_platform": "linux", "platform_machine": "x86_64", "platform_release": "6.17.0-29-generic"},
+    }
+    for wheel, environment in environments.items():
+        selected = [req.url for req in requirements if req.marker.evaluate({**environment, "python_version": "3.12"})]
+        assert len(selected) == 1 and selected[0].endswith("/" + wheel)
+        assert selected[0].startswith(release) or "win_amd64" in wheel
+        assert not any(req.marker.evaluate({**environment, "python_version": "3.11"}) for req in requirements)
+    arm = {"sys_platform": "linux", "platform_machine": "aarch64", "platform_release": "6.17.0", "python_version": "3.12"}
+    assert not any(req.marker.evaluate(arm) for req in requirements)
 
 
 def test_default_sources_do_not_select_local_ddo():
