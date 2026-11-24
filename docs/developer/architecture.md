@@ -25,8 +25,9 @@ flowchart TD
     DENOISE -. "profile build: measure, save and stop" .-> OUTPUT
 ```
 
-Conventional full-pipeline controls expose fewer phase boundaries than staged
-runners.
+The official Leaf controls run the same staged custom-block workflow as the DDO
+runners, with official Diffusers leaf offload in place of DDO, so they report
+the same component phases.
 
 ## Diagram guide
 

@@ -1,7 +1,7 @@
 # Shared runner controls
 
 Run commands from the examples root in the installed environment. Each runner's
-`--help` defines the options it supports; minimal and conventional controls
+`--help` defines the options it supports; minimal and official Leaf controls
 expose only a subset. Shared options use the same spelling and meaning.
 
 ## Execution
@@ -58,8 +58,8 @@ All public LTX image/video and Qwen entries use the shared vocabulary, including
 `--ddo-preset` and `--custom-blocks` where supported. The
 linear and SDNQ entries support `--ddo-backend linear` only. All three minimal
 entries use native `--ddo-backend vmm --ddo-preset auto`; their transformer uses
-DDO's source-aware loading and bootstrap before CUDA-owning imports. Qwen's
-conventional leaf control has no DDO backend/preset selectors. See the
+DDO's source-aware loading and bootstrap before CUDA-owning imports. The official
+Leaf controls have no DDO backend/preset selectors. See the
 [LTX image interface matrix](ltx2-image-parameters.md#interface-scope-by-runner)
 for supported component and reporting controls. Diagnostic controls are kept
 out of these public commands. See the [video interface matrix](ltx2-video-parameters.md#interface-scope-by-runner)

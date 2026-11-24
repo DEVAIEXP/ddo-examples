@@ -24,7 +24,7 @@ Use `--local-files-only` only for offline runs with all required files cached.
 | `run_dynamic_modular.py` | Linear DDO and compatibility presets |
 | `run_dynamic_modular_vmm.py` | Native VMM or protected NVMe |
 | `run_dynamic_modular_vmm_diagnostics.py` | Native execution and transport experiments |
-| `run_diffusers_leaf.py` | Conventional Diffusers leaf control |
+| `run_diffusers_leaf.py` | Staged control with official Diffusers leaf offload |
 | `run_dynamic_modular_sdnq.py` | Saved SDNQ transformer |
 
 Inspect available options:
@@ -61,6 +61,7 @@ python -B scripts/qwen_image_21/run_diffusers_leaf.py `
   --metrics-level 2 `
   --save-metrics `
   --vae-leaf-offload `
+  --custom-blocks modular_diffusers/custom_blocks/qwen_image_21 `
   --image-joint-attention default `
   --output-dir outputs/qwen-image21/official-leaf
 ```

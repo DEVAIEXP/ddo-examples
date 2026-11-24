@@ -259,8 +259,8 @@ def build_plan(args):
             pass  # Omit --vae-leaf-offload to use the runner's resident VAE path.
         else:
             command += ["--vae-leaf-offload"]
-        if ltx or not leaf:
-            command += ["--custom-blocks", str(blocks)]
+        # Every runner, Leaf controls included, runs the reviewed custom blocks.
+        command += ["--custom-blocks", str(blocks)]
         if ltx:
             command += ["--guidance-scale", "1", "--guidance-rescale", "0.7", "--no-pag"]
         if leaf:

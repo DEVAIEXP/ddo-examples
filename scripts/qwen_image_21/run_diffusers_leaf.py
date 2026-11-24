@@ -1,8 +1,11 @@
-"""Conventional Qwen-Image 2.1 control using official leaf offload.
+"""Staged Qwen-Image 2.1 control using official Diffusers leaf offload.
 
-No DDO offload runtime, allocator or custom model blocks are installed.
-Shared reporting and optional DDO timing/Windows lifecycle helpers are instrumentation.
-The full pipeline keeps its components loaded; it is not phase-staged.
+The same modular workflow and phases as the DDO runners: trusted custom blocks
+for text encoding, preparation, denoising and decoding, each component loaded,
+attached, run and released in its own phase. Official Diffusers leaf-level
+group offloading replaces DDO; no DDO offload runtime or allocator is installed.
+Shared reporting and optional DDO timing/Windows lifecycle helpers are
+instrumentation only.
 """
 
 import argparse
@@ -22,10 +25,12 @@ from scripts.helpers.runner_logging import configure_runner_logging, quiet_qwen_
 
 configure_runner_logging()
 
-from scripts.helpers.runner_controls import parse_common_arguments, purge_for_runner, runner_settings_environ, record_runner_report
+from scripts.helpers.runner_controls import parse_common_arguments
 from scripts.helpers.image_benchmark_attention import add_image_attention_arguments, configure_image_attention
 
+
 def parse_args(argv=None):
+    from scripts.helpers.qwen_custom_blocks import add_custom_blocks_arguments
     from scripts.helpers.runner_reporting import add_reporting_arguments
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -37,6 +42,7 @@ def parse_args(argv=None):
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--local-files-only", action="store_true")
+    add_custom_blocks_arguments(parser)
     parser.add_argument("--vae-tiling", action="store_true")
     parser.add_argument("--vae-leaf-offload", action="store_true")
     parser.add_argument("--no-stream-offload", action="store_true",
@@ -51,29 +57,56 @@ def main():
     args = parse_args()
     import diffusers
     import torch
-    with quiet_qwen_processor_doc_notices():
-        from diffusers import QwenImage21Pipeline
+
+    from scripts.helpers.qwen_custom_blocks import load_custom_blocks
+
+    custom, custom_blocks_metadata = load_custom_blocks(args)
+    QwenImage21DecodeStep = custom.QwenImage21DecodeStep
+    QwenImage21DenoiseStep = custom.QwenImage21DenoiseStep
+    QwenImage21PrepareStep = custom.QwenImage21PrepareStep
+    QwenImage21TextEncoderStep = custom.QwenImage21TextEncoderStep
+    from diffusers import (
+        AutoencoderKLQwenImage21,
+        FlowMatchEulerDiscreteScheduler,
+        QwenImage21Pipeline,
+        QwenImage21Transformer2DModel,
+    )
     from diffusers.hooks.group_offloading import apply_group_offloading
     from diffusers_dynamic_offloader.timing import DynamicOffloadExecutionTimer
+    from huggingface_hub import snapshot_download
+    with quiet_qwen_processor_doc_notices():
+        from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 
-    from scripts.helpers.inference_utils import flush, is_wsl
+    from scripts.helpers.inference_utils import flush
     from scripts.helpers.runner_reporting import RunnerReporting
-    from scripts.helpers.qwen_pipeline_phases import measure_qwen_pipeline_phases
 
-    device = torch.device("cuda:0")
-    cleanup_before_decode = flush if is_wsl() else None
+    model = args.model_path
+    loading = {"local_files_only": args.local_files_only}
+    device, dtype = "cuda:0", torch.bfloat16
+    offload = {
+        "offload_type": "leaf_level",
+        "use_stream": not args.no_stream_offload,
+        "record_stream": False,
+        "low_cpu_mem_usage": not args.no_stream_offload,
+        "non_blocking": False,
+    }
+
+    def attach_leaf(module, **options):
+        """Official Diffusers leaf-level group offloading on one component."""
+        apply_group_offloading(module, onload_device=torch.device(device), offload_device=torch.device("cpu"),
+                               **options)
+
     metrics = {
         "runner": Path(__file__).stem,
-        "model": args.model_path,
+        "variant": "base",
+        "model": model,
+        "custom_blocks": custom_blocks_metadata,
         "backend": "official_diffusers_leaf",
         "ddo_enabled": False,
-        "pre_decode_cleanup_policy": {
-            "enabled": cleanup_before_decode is not None,
-            "platform_scope": "wsl",
-            "actions": ["gc_collect", "cuda_synchronize", "cuda_empty_cache"],
-            "preserves_live_tensors": True,
-        },
-        "diffusers_source": diffusers.__file__,
+        "offload": offload,
+        "events": [],
+        "steps": [],
+        "denoise_callbacks": [],
         "workload": {
             "prompt": args.prompt,
             "width": args.width,
@@ -85,101 +118,140 @@ def main():
             "use_kv_cache": True,
             "vae_tiling": args.vae_tiling,
         },
-        "offload": {
-            "offload_type": "leaf_level",
-            "use_stream": not args.no_stream_offload,
-            "record_stream": False,
-            "low_cpu_mem_usage": not args.no_stream_offload,
-            "non_blocking": False,
-        },
-        "timing_scope": "Full conventional pipeline aggregate with isolated host-call "
-        "denoise and decode records. First callback includes encoding; CUDA timing "
-        "covers the full pipeline. Host callbacks are asynchronous.",
-        "events": [],
-        "steps": [],
-        "denoise_callbacks": [],
+        "diffusers_source": diffusers.__file__,
     }
+
     with RunnerReporting(args, metrics, device) as run:
-        with run.phase("load_pipeline"):
-            with quiet_qwen_processor_doc_notices():
-                pipe = QwenImage21Pipeline.from_pretrained(
-                    args.model_path,
-                    dtype=torch.bfloat16,
-                    local_files_only=args.local_files_only,
+        with run.phase("metadata"):
+            metadata = QwenImage21Pipeline.load_config(model, **loading)
+            sample_sigmas = metadata.get("sample_sigmas")
+            model_root = Path(model)
+            if not model_root.is_dir():
+                model_root = Path(snapshot_download(model, allow_patterns=["processor/*"], **loading))
+            metrics["resolved_model_root"] = str(model_root)
+            metrics["sample_sigmas"] = sample_sigmas
+
+        with run.phase("load_text_encoder"):
+            text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+                model,
+                subfolder="text_encoder",
+                torch_dtype=dtype,
+                **loading,
+            ).eval()
+        with quiet_qwen_processor_doc_notices():
+            processor = Qwen3VLProcessor.from_pretrained(model_root / "processor", **loading)
+        with run.phase("attach_text_encoder"):
+            attach_leaf(text_encoder, **offload)
+            prompt_pipe = QwenImage21TextEncoderStep().init_pipeline()
+            prompt_pipe.update_components(text_encoder=text_encoder, processor=processor)
+        with run.phase("encode"):
+            encoded = prompt_pipe(
+                prompt=args.prompt,
+                execution_device=device,
+                output=["prompt_embeds", "prompt_embeds_mask", "image_pad_mask"],
+            )
+            # Keep only downstream tensors, on CPU, before releasing encoder.
+            encoded = {key: value.cpu() if isinstance(value, torch.Tensor) else value for key, value in encoded.items()}
+        with run.phase("cleanup_text_encoder"):
+            del text_encoder, processor, prompt_pipe
+            flush()
+
+        with run.phase("purge_before_transformer"):
+            run.purge_before_transformer()
+
+        with run.phase("load_transformer"):
+            transformer = QwenImage21Transformer2DModel.from_pretrained(
+                model,
+                subfolder="transformer",
+                torch_dtype=dtype,
+                low_cpu_mem_usage=True,
+                **loading,
+            ).eval()
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(model, subfolder="scheduler", **loading)
+            configure_image_attention(transformer, args, metrics, qwen=True)
+        with run.phase("attach_transformer"):
+            attach_leaf(transformer, **offload)
+        with run.phase("prepare"):
+            prepare = QwenImage21PrepareStep().init_pipeline()
+            prepare.update_components(transformer=transformer, scheduler=scheduler, sample_sigmas=sample_sigmas)
+            prepared = prepare(
+                **encoded,
+                execution_device=device,
+                height=args.height,
+                width=args.width,
+                num_inference_steps=args.steps,
+                generator=torch.Generator().manual_seed(args.seed),
+            )
+            # Drop CPU conditioning and the preparation pipeline before denoise.
+            del encoded, prepare
+            height, width = prepared.get("height"), prepared.get("width")
+            metrics["executed_steps"] = len(prepared.get("timesteps"))
+            metrics["workload"].update(height_actual=height, width_actual=width)
+            denoise = QwenImage21DenoiseStep().init_pipeline()
+            denoise.update_components(transformer=transformer, scheduler=scheduler)
+
+        with run.phase("denoise"):
+            last_callback = time.perf_counter()
+            started = last_callback
+            timer = DynamicOffloadExecutionTimer(enabled=args.ddo_gpu_timing, device=torch.device(device))
+
+            def callback(pipeline, index, timestep, values, execution_timer=timer):
+                nonlocal last_callback
+                execution_timer.mark_step()
+                now = time.perf_counter()
+                elapsed = now - last_callback
+                metrics["denoise_callbacks"].append(
+                    {
+                        "step": index + 1,
+                        "callback_interval_sec": elapsed,
+                        "scope": "asynchronous_host_callback",
+                    }
                 )
-        with run.phase("attach_leaf"):
-            configure_image_attention(pipe.transformer, args, metrics, qwen=True)
-            for component in (pipe.text_encoder, pipe.transformer):
-                apply_group_offloading(
-                    component,
-                    onload_device=device,
-                    offload_device=torch.device("cpu"),
-                    **metrics["offload"],
-                )
-            del component
-            if args.vae_leaf_offload:
-                apply_group_offloading(
-                    pipe.vae, onload_device=device, offload_device=torch.device("cpu"),
-                    offload_type="leaf_level", use_stream=False,
-                )
-            else:
-                pipe.vae.to(device)
-            metrics["vae_decode_route"] = "diffusers_leaf" if args.vae_leaf_offload else "resident"
+                last_callback = now
+                if args.show_denoise_steps:
+                    print(f"Step {index + 1}: {elapsed:.3f} s (host callback)", flush=True)
+                return values
+
+            with timer:
+                # CPU readback is the completion boundary; no per-step waits.
+                latent = denoise(state=prepared, callback_on_step_end=callback, output="latents").cpu()
+            metrics["denoise_through_cpu_readback_sec"] = time.perf_counter() - started
+            # Resolve the final event only once, when explicitly requested.
+            metrics["execution_timing"] = timer.snapshot(wait=args.ddo_gpu_timing)
+        with run.phase("cleanup_transformer"):
+            # Remove all state/component references, not just the module variable.
+            del transformer, prepared, denoise, scheduler, timer, callback
+            flush()
+
+        with run.phase("load_vae"):
+            vae = AutoencoderKLQwenImage21.from_pretrained(
+                model,
+                subfolder="vae",
+                torch_dtype=dtype,
+                **loading,
+            ).eval()
             if args.vae_tiling:
-                pipe.vae.enable_tiling()
-            metrics["executed_controls"] = {"vae_tiling": bool(pipe.vae.use_tiling)}
-        # Do not pretend a before-pipeline purge is a before-transformer purge.
-        # The one-shot lifecycle callback runs on the first transformer invocation.
-        purge_done = False
-
-        def before_transformer(module, inputs):
-            nonlocal purge_done
-            if not purge_done:
-                run.purge_before_transformer()
-                purge_done = True
-
-        purge_handle = pipe.transformer.register_forward_pre_hook(before_transformer)
-        try:
-            with run.phase("generate"):
-                timer = DynamicOffloadExecutionTimer(enabled=args.ddo_gpu_timing, device=device)
-                previous_callback = time.perf_counter()
-
-                def on_step_end(pipeline, index, timestep, values, execution_timer=timer):
-                    nonlocal previous_callback
-                    execution_timer.mark_step()
-                    now = time.perf_counter()
-                    elapsed = now - previous_callback
-                    metrics["denoise_callbacks"].append(
-                        {
-                            "step": index + 1,
-                            "callback_interval_sec": elapsed,
-                            "scope": "encode_plus_first_step" if index == 0 else "asynchronous_host_callback",
-                        }
-                    )
-                    previous_callback = now
-                    if args.show_denoise_steps:
-                        print(f"Step {index + 1}: {elapsed:.3f} s (host callback)", flush=True)
-                    return values
-
-                with timer, measure_qwen_pipeline_phases(
-                    pipe, run.tracker, metrics, before_decode=cleanup_before_decode,
-                ):
-                    image = pipe(
-                        prompt=args.prompt,
-                        height=args.height,
-                        width=args.width,
-                        num_inference_steps=args.steps,
-                        true_cfg_scale=1.0,
-                        generator=torch.Generator(device="cpu").manual_seed(args.seed),
-                        use_kv_cache=True,
-                        callback_on_step_end=on_step_end,
-                    ).images[0]
-                metrics["execution_timing"] = timer.snapshot(wait=args.ddo_gpu_timing)
-                metrics["executed_steps"] = len(metrics["denoise_callbacks"])
-        finally:
-            purge_handle.remove()
-        with run.phase("cleanup_pipeline"):
-            del pipe, purge_handle, timer, on_step_end, before_transformer
+                vae.enable_tiling()
+        with run.phase("attach_vae"):
+            if args.vae_leaf_offload:
+                attach_leaf(vae, offload_type="leaf_level", use_stream=False)
+            else:
+                vae.to(device)
+            metrics["vae_decode_route"] = "diffusers_leaf" if args.vae_leaf_offload else "resident"
+            metrics["executed_controls"] = {
+                "vae_offload": metrics["vae_decode_route"],
+                "vae_offload_use_stream": False,
+                "vae_tiling": bool(vae.use_tiling),
+                "vae_class": type(vae).__name__,
+            }
+            decode = QwenImage21DecodeStep().init_pipeline()
+            decode.update_components(vae=vae)
+        with run.phase("decode"):
+            image = decode(latents=latent, height=height, width=width, execution_device=device, output="images")[0]
+            # Native postprocessing already materializes a CPU image.
+            del latent
+        with run.phase("cleanup_vae"):
+            del decode, vae
             flush()
         with run.phase("save_image"):
             args.output_dir.mkdir(parents=True, exist_ok=True)
