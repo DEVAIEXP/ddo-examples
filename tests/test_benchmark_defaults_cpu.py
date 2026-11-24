@@ -22,6 +22,28 @@ def run_controller(*args):
     )
 
 
+def test_native_exports_reads_the_installed_library_without_loading_it():
+    import ddo_vmm_bootstrap as bootstrap
+
+    library = bootstrap._discover_library(None, bootstrap._installed_allocator_root())
+    if library is None:
+        pytest.skip("No installed allocator library in this environment.")
+    exports = suite.native_exports(library)
+    assert suite.SOURCE_DISPATCHER_EXPORTS <= exports
+    abi = suite.read_json(library.parent / "artifact.json").get("abi", {})
+    if isinstance(abi.get("required_exports"), list):
+        assert set(abi["required_exports"]) <= exports
+    if isinstance(abi.get("exports"), int):
+        assert abi["exports"] == len(exports)
+
+
+def test_native_exports_rejects_unknown_formats(tmp_path):
+    path = tmp_path / "library.bin"
+    path.write_bytes(b"not a native library")
+    with pytest.raises(ValueError, match="Unsupported"):
+        suite.native_exports(path)
+
+
 def test_hub_snapshot_uses_the_standard_hub_cache(monkeypatch, tmp_path):
     from huggingface_hub import constants
 

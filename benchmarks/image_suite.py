@@ -376,6 +376,60 @@ def git(directory, *args):
     return subprocess.check_output(["git", "-C", str(directory), *args], text=True).strip()
 
 
+SOURCE_DISPATCHER_EXPORTS = {"ddo_vmm_source_dispatcher_enabled", "ddo_vmm_source_cache_select_dispatcher"}
+
+
+def native_exports(path):
+    """Read exported symbol names from a PE (Windows) or ELF (Linux) file without loading it."""
+    import struct
+
+    data = Path(path).read_bytes()
+    if data[:2] == b"MZ":
+        pe = struct.unpack_from("<I", data, 0x3C)[0]
+        if data[pe:pe + 4] != b"PE\0\0":
+            raise ValueError(f"Not a PE file: {path}")
+        sections, optional_size = struct.unpack_from("<H", data, pe + 6)[0], struct.unpack_from("<H", data, pe + 20)[0]
+        optional = pe + 24
+        directories = optional + (112 if struct.unpack_from("<H", data, optional)[0] == 0x20B else 96)
+        export_rva = struct.unpack_from("<I", data, directories)[0]
+        # Section header fields: VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData.
+        table = [struct.unpack_from("<IIII", data, optional + optional_size + 40 * index + 8)
+                 for index in range(sections)]
+
+        def offset(rva):
+            for virtual_size, virtual_address, raw_size, raw_pointer in table:
+                if virtual_address <= rva < virtual_address + max(virtual_size, raw_size):
+                    return rva - virtual_address + raw_pointer
+            raise ValueError(f"RVA outside the PE sections: {rva:#x}")
+
+        if not export_rva:
+            return set()
+        directory = offset(export_rva)
+        count, names = struct.unpack_from("<I", data, directory + 24)[0], struct.unpack_from("<I", data, directory + 32)[0]
+        result = set()
+        for index in range(count):
+            start = offset(struct.unpack_from("<I", data, offset(names) + 4 * index)[0])
+            result.add(data[start:data.index(b"\0", start)].decode("ascii"))
+        return result
+    if data[:4] == b"\x7fELF" and data[4] == 2 and data[5] == 1:
+        section_offset = struct.unpack_from("<Q", data, 0x28)[0]
+        entry_size, count = struct.unpack_from("<HH", data, 0x3A)
+        headers = [struct.unpack_from("<IIQQQQIIQQ", data, section_offset + entry_size * index)
+                   for index in range(count)]
+        result = set()
+        for kind, _flags, _address, start, size, link, entry in (
+                (h[1], h[2], h[3], h[4], h[5], h[6], h[9]) for h in headers):
+            if kind != 11:  # SHT_DYNSYM
+                continue
+            strings = headers[link][4]
+            for symbol in range(start, start + size, entry):
+                name, info, _other, section_index = struct.unpack_from("<IBBH", data, symbol)
+                if name and section_index and info >> 4 in (1, 2):  # defined GLOBAL or WEAK
+                    result.add(data[strings + name:data.index(b"\0", strings + name)].decode("ascii"))
+        return result
+    raise ValueError(f"Unsupported native library format: {path}")
+
+
 def execution_identity(plan, expected_dll=None):
     """Record the execution identity; download a missing pinned checkpoint first.
 
@@ -410,10 +464,13 @@ def execution_identity(plan, expected_dll=None):
         raise ValueError("The installed allocator wheel does not provide a native library.")
     artifact = read_json(dll.parent / "artifact.json")
     actual = digest(dll)
-    exports = set(artifact.get("abi", {}).get("required_exports", []))
-    if ((expected_dll is not None and actual != expected_dll) or actual != artifact.get("sha256")
-            or not {"ddo_vmm_source_dispatcher_enabled", "ddo_vmm_source_cache_select_dispatcher"} <= exports):
-        raise ValueError("Packaged native library identity or source dispatcher ABI differs from the reviewed artifact.")
+    if (expected_dll is not None and actual != expected_dll) or actual != artifact.get("sha256"):
+        raise ValueError("Packaged native library identity differs from the reviewed artifact.")
+    # Some ABI reports list only export counts; read the verified binary's own table then.
+    listed = artifact.get("abi", {}).get("required_exports")
+    exports = set(listed) if isinstance(listed, list) else native_exports(dll)
+    if not SOURCE_DISPATCHER_EXPORTS <= exports:
+        raise ValueError("The packaged native library does not export the source dispatcher ABI.")
     checkpoint = Path(plan["checkpoint"])
     if checkpoint.name != plan["checkpoint_revision"] or not (checkpoint / "model_index.json").is_file():
         raise ValueError(f"Expected the reviewed checkpoint snapshot: {checkpoint}")
