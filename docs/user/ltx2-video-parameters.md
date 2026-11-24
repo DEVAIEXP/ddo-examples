@@ -19,7 +19,8 @@ for lifecycle and reporting semantics.
 | Other native encoder/VAE controls | No | No | Yes | No |
 | `--bits` | No | No | No | Yes |
 | `--metrics-level` | No | No | Yes | No |
-| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | Yes (VMM residency profile, `NAME` or `auto`) | No |
+| `--ddo-profile NAME`, `--build-ddo-profile` | No | Yes (linear capacity profile) | Yes (VMM residency profile, `NAME` or `auto`) | Yes (SDNQ capacity profile) |
+| `--validate-ddo-profile` | No | No | No | Yes; validates a pending SDNQ profile with two steps and stops before decode. Requires `--ddo-profile`; excludes `--build-ddo-profile`. |
 
 Unsupported options are rejected, including abbreviated names. Backend and
 preset selection do not change the input audio or decode device automatically.

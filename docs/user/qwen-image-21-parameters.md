@@ -34,6 +34,8 @@ leaf entries.
 | `--text-encoder-native-vmm` | Default on for `vmm/auto` (off on other routes); `--no-text-encoder-native-vmm` selects Diffusers leaf offload. Loads the Qwen3-VL encoder through DDO's weight-aware loader with native component ownership. A measured 512² Windows pair (standby purge before run, benchmark transport) encoded in 3.2 s versus 13.7 s with leaf, identical image; this is a recipe default, not a general claim. |
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--attention-backend default\|cudnn` | Main VMM runner. The default keeps PyTorch's SDPA order. Opt-in `cudnn` sets the denoise priority to PyTorch flash > cuDNN > memory-efficient > math, with fallback for ineligible calls. It can be used on its own and may change the output numerically. The setting contributes to the `auto` profile name. |
+| `--image-joint-attention default\|cudnn` | All public Qwen entries. Joint text/image attention backend; default `default` keeps PyTorch SDPA, `cudnn` selects cuDNN attention. FlashAttention 2 is not offered because it cannot preserve the text padding mask. `--transformer-attention` is an alias. |
+| `--trace-transformer-attention` | Off. Records the attention operators of the first transformer forward in the metrics report. Diagnostic only; the benchmark controller runs it in a separate operator-check stage before measuring. |
 
 | Control | Purpose |
 | --- | --- |
@@ -89,7 +91,7 @@ Advanced native experiments use `run_dynamic_modular_vmm_diagnostics.py`.
 | `run_dynamic_minimal.py` | Native VMM transformer (`--ddo-backend vmm` / `--ddo-preset auto`), native capacities and opt-in execution backing reclaim; base/Turbo, custom blocks, offline loading and opt-in VAE tiling. Defaults: 1024², base 25 steps, seed 42, full memory monitoring. No separate profile/metrics display switches. |
 | `run_dynamic_modular.py` | Linear/compatibility route; same source/sampling vocabulary as VMM. Defaults: 1024², base 25 steps, seed 42, RSS/metrics level 2, display/save enabled, profile disabled. Supports the component controls described below. |
 | `run_dynamic_modular_sdnq.py` | Packed base INT4 or its leaf control; backend `linear`, preset `auto`, 512², 20 steps, seed 42. Same reporting defaults as linear. `--model-path` overrides the packed transformer; `--model-revision` optionally pins it. `--auxiliary-model` defaults to `Qwen/Qwen-Image-2.1`. See [optional weight formats](qwen-image-21.md#optional-weight-formats). |
-| `run_diffusers_leaf.py` | Conventional full-pipeline control, with no DDO runtime or custom blocks. No backend/preset selectors. Pipeline `--model-path`, prompt, dimensions, steps, seed, offline loading, VAE tiling and reporting only; defaults 512²/20 steps/seed 42 and RSS/level 2. Exposes purge before run/transformer and after run, with no separate encoder boundary. |
+| `run_diffusers_leaf.py` | Conventional full-pipeline control, with no DDO runtime or custom blocks. No backend/preset selectors. Pipeline `--model-path`, prompt, dimensions, steps, seed, offline loading, VAE tiling and reporting only; defaults 512²/20 steps/seed 42 and RSS/level 2. Exposes purge before run/transformer and after run, with no separate encoder boundary. `--no-stream-offload` uses non-streamed Leaf for the text encoder and transformer. |
 
 `--text-encoder-preset` and `--vae-linear-offload` belong to entries that expose
 them, such as the linear runner; they are not options of this public VMM entry.

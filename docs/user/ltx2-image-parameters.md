@@ -98,6 +98,8 @@ still requires separate validation.
 | `--text-encoder-vmm-resident-weight-budget-gb` | 4 GiB with the native encoder; encoder-only ceiling, never the transformer's residency budget. |
 | `--vae-leaf-offload` | Default off; explicitly select no-stream leaf VAE offload instead of the resident decoder. |
 | `--attention-backend default\|cudnn` | Main VMM runner. The default keeps PyTorch's SDPA order. Opt-in `cudnn` sets the denoise priority to PyTorch flash > cuDNN > memory-efficient > math, with fallback for ineligible calls. It can be used on its own and may change the output numerically. The setting contributes to the `auto` profile name. |
+| `--image-self-attention default\|cudnn\|flash-attn2` | All public LTX image entries. Transformer self-attention backend; default `default` keeps PyTorch SDPA. `cudnn` selects cuDNN attention and `flash-attn2` the optional FlashAttention 2 package. Cross-attention keeps the native backend. `--transformer-attention` is an alias. |
+| `--trace-transformer-attention` | Off. Records the attention operators of the first transformer forward in the metrics report. Diagnostic only; the benchmark controller runs it in a separate operator-check stage before measuring. |
 
 Boolean loading/group/dynamic controls also accept `--no-...`. The VAE leaf
 override accepts `--no-vae-leaf-offload`. This entry does not expose native idle

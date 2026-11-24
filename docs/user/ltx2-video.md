@@ -60,7 +60,6 @@ ceiling. If it reports `final`, use the generation command.
 ```powershell
 python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
   --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
-  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals `
   --no-ddo-vmm-execution-backing-reclaim `
   --ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 `
   --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 --purge-before-transformer `
@@ -77,7 +76,6 @@ python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
 ```powershell
 python -B scripts/ltx2_video/run_dynamic_modular_vmm_distilled.py `
   --ddo-backend vmm --ddo-preset auto --ddo-profile auto `
-  --no-phase-modulation --no-compact-timesteps --no-inplace-residuals `
   --no-ddo-vmm-execution-backing-reclaim `
   --ddo-vmm-total-staging-gb 1.5 --ddo-vmm-source-cache-gb 24.625 --ddo-vmm-source-registered-gb 24.625 `
   --text-encoder-native-vmm --text-encoder-vmm-resident-weight-budget-gb 4 --purge-before-transformer `
