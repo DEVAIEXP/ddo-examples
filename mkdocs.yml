@@ -55,3 +55,6 @@ nav:
       - Validation: docs/developer/validation.md
       - Release procedure: docs/developer/releases.md
       - Local documentation preview: docs/developer/docs-preview.md
+  - Future improvements:
+      - Overview: docs/future/README.md
+      - DDO Runner proposal: docs/future/ddo-runner-proposal.md
